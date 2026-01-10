@@ -65,6 +65,14 @@ export default function Home() {
   }, []);
 
   const handleReset = useCallback(() => {
+    setState("file-upload");
+    setProgress(0);
+    setError(null);
+    setMeshUrl(null);
+    setFileName(null);
+  }, []);
+
+  const handleChangePatient = useCallback(() => {
     setState("patient-selection");
     setPatientId(null);
     setProgress(0);
@@ -95,7 +103,7 @@ export default function Home() {
                 {patientId}
               </p>
               <button
-                onClick={() => setState("patient-selection")}
+                onClick={handleChangePatient}
                 className="mt-2 text-sm text-blue-600 hover:text-blue-800 underline"
               >
                 Change Patient
@@ -122,6 +130,17 @@ export default function Home() {
 
         {state === "viewing" && meshUrl && (
           <div className="w-full">
+            <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3 max-w-2xl mx-auto">
+              <p className="text-sm text-blue-800">
+                <span className="font-semibold">Patient ID:</span> {patientId}
+                <button
+                  onClick={handleChangePatient}
+                  className="ml-4 text-sm text-blue-600 hover:text-blue-800 underline"
+                >
+                  Change Patient
+                </button>
+              </p>
+            </div>
             <BrainViewer meshUrl={meshUrl} onReset={handleReset} />
           </div>
         )}
