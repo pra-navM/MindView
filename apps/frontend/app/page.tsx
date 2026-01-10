@@ -59,7 +59,7 @@ export default function Home() {
     setState("file-upload");
   }, []);
 
-  const handleFileSelect = useCallback(async (file: File) => {
+  const handleFileSelect = useCallback(async (file: File, scanDate?: string) => {
     if (patientId === null || caseId === null) {
       setError("Patient ID and Case ID are required");
       setState("error");
@@ -73,7 +73,7 @@ export default function Home() {
 
     try {
       setProgress(10);
-      const response = await uploadFile(file, patientId, caseId);
+      const response = await uploadFile(file, patientId, caseId, scanDate);
 
       if (response.status === "completed") {
         setProgress(100);

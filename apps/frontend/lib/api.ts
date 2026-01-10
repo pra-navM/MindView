@@ -17,18 +17,21 @@ export interface StatusResponse {
 export async function uploadFile(
   file: File,
   patientId: number,
-  caseId: number
+  caseId: number,
+  scanDate?: string
 ): Promise<UploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(
-    `${API_BASE_URL}/api/upload?patient_id=${patientId}&case_id=${caseId}`,
-    {
-      method: "POST",
-      body: formData,
-    }
-  );
+  let url = `${API_BASE_URL}/api/upload?patient_id=${patientId}&case_id=${caseId}`;
+  if (scanDate) {
+    url += `&scan_date=${encodeURIComponent(scanDate)}`;
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    body: formData,
+  });
 
   if (!response.ok) {
     const error = await response.json();

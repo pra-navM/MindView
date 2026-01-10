@@ -290,11 +290,13 @@ def process_obj_to_glb(job_id: str, input_path: Path, output_path: Path) -> None
 async def upload_file(
     patient_id: int,
     case_id: int,
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    scan_date: Optional[str] = None
 ):
     """Upload a NIfTI or OBJ file and start processing."""
     print(f"=== Upload request received ===")
     print(f"Patient ID: {patient_id}, Case ID: {case_id}")
+    print(f"Scan Date: {scan_date}")
     print(f"Filename: {file.filename}")
 
     if not file.filename:
@@ -347,6 +349,16 @@ async def upload_file(
     print(f"Processing complete. Status: {jobs[job_id]['status']}")
     print(f"Error: {jobs[job_id].get('error')}")
 
+    # Parse scan_date if provided
+    scan_timestamp = datetime.utcnow()
+    if scan_date:
+        try:
+            # Parse ISO format date string
+            scan_timestamp = datetime.fromisoformat(scan_date.replace('Z', '+00:00'))
+        except Exception as e:
+            print(f"Warning: Failed to parse scan_date '{scan_date}': {e}")
+            # Fall back to current time if parsing fails
+
     # Save file metadata to database
     file_doc = {
         "file_id": job_id,
@@ -363,7 +375,7 @@ async def upload_file(
         "progress": jobs[job_id]["progress"],
         "error": jobs[job_id].get("error"),
         "uploaded_at": datetime.utcnow(),
-        "scan_timestamp": datetime.utcnow(),
+        "scan_timestamp": scan_timestamp,
         "metadata": {}
     }
 
