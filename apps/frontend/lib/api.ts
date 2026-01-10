@@ -14,14 +14,21 @@ export interface StatusResponse {
   error: string | null;
 }
 
-export async function uploadFile(file: File): Promise<UploadResponse> {
+export async function uploadFile(
+  file: File,
+  patientId: number,
+  caseId: number
+): Promise<UploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE_URL}/api/upload`, {
-    method: "POST",
-    body: formData,
-  });
+  const response = await fetch(
+    `${API_BASE_URL}/api/upload?patient_id=${patientId}&case_id=${caseId}`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
 
   if (!response.ok) {
     const error = await response.json();
@@ -178,5 +185,54 @@ export async function deleteCase(
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || "Failed to delete case");
+  }
+}
+
+export interface ScanFileResponse {
+  job_id: string;
+  file_id: string;
+  case_id: number;
+  patient_id: number;
+  original_filename: string;
+  status: string;
+  progress: number;
+  mesh_url: string | null;
+  original_url: string | null;
+  error: string | null;
+  uploaded_at: string;
+  scan_timestamp: string;
+  doctor_notes: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export async function getFilesForCase(
+  patientId: number,
+  caseId: number
+): Promise<ScanFileResponse[]> {
+  const response = await fetch(`${API_BASE_URL}/api/files/${patientId}/${caseId}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || "Failed to get files");
+  }
+
+  return response.json();
+}
+
+export async function deleteFile(
+  patientId: number,
+  caseId: number,
+  jobId: string
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/files/${patientId}/${caseId}/${jobId}`,
+    {
+      method: "DELETE",
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || "Failed to delete file");
   }
 }

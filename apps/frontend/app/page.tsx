@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import PatientSelection from "@/components/PatientSelection";
 import CaseList from "@/components/CaseList";
+import FileList from "@/components/FileList";
 import FileUpload from "@/components/FileUpload";
 import ProcessingStatus from "@/components/ProcessingStatus";
 import { uploadFile, getMeshUrl } from "@/lib/api";
@@ -20,6 +21,7 @@ const BrainViewer = dynamic(() => import("@/components/BrainViewer"), {
 type AppState =
   | "patient-selection"
   | "case-selection"
+  | "file-list"
   | "file-upload"
   | "uploading"
   | "processing"
@@ -44,10 +46,26 @@ export default function Home() {
   const handleCaseSelected = useCallback((id: number, name: string) => {
     setCaseId(id);
     setCaseName(name);
+    setState("file-list");
+  }, []);
+
+  const handleFileSelectedFromList = useCallback((jobId: string, filename: string) => {
+    setFileName(filename);
+    setMeshUrl(getMeshUrl(jobId));
+    setState("viewing");
+  }, []);
+
+  const handleUploadFileClick = useCallback(() => {
     setState("file-upload");
   }, []);
 
   const handleFileSelect = useCallback(async (file: File) => {
+    if (patientId === null || caseId === null) {
+      setError("Patient ID and Case ID are required");
+      setState("error");
+      return;
+    }
+
     setFileName(file.name);
     setState("uploading");
     setProgress(0);
@@ -55,7 +73,7 @@ export default function Home() {
 
     try {
       setProgress(10);
-      const response = await uploadFile(file);
+      const response = await uploadFile(file, patientId, caseId);
 
       if (response.status === "completed") {
         setProgress(100);
@@ -72,12 +90,10 @@ export default function Home() {
       setError(err instanceof Error ? err.message : "An error occurred");
       setState("error");
     }
-  }, []);
+  }, [patientId, caseId]);
 
   const handleReset = useCallback(() => {
-    setState("case-selection");
-    setCaseId(null);
-    setCaseName(null);
+    setState("file-list");
     setProgress(0);
     setError(null);
     setMeshUrl(null);
@@ -117,6 +133,17 @@ export default function Home() {
           />
         )}
 
+        {state === "file-list" && patientId !== null && caseId !== null && caseName !== null && (
+          <FileList
+            patientId={patientId}
+            caseId={caseId}
+            caseName={caseName}
+            onFileSelected={handleFileSelectedFromList}
+            onUploadFile={handleUploadFileClick}
+            onChangeCase={() => setState("case-selection")}
+          />
+        )}
+
         {state === "file-upload" && (
           <div className="max-w-2xl mx-auto">
             <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
@@ -129,6 +156,12 @@ export default function Home() {
                 </p>
               </div>
               <div className="flex gap-4 mt-2">
+                <button
+                  onClick={() => setState("file-list")}
+                  className="text-sm text-blue-600 hover:text-blue-800 underline"
+                >
+                  Back to Files
+                </button>
                 <button
                   onClick={() => setState("case-selection")}
                   className="text-sm text-blue-600 hover:text-blue-800 underline"
@@ -171,6 +204,12 @@ export default function Home() {
                   <span className="font-semibold ml-2">Case:</span> {caseName} (ID: {caseId})
                 </p>
                 <div className="flex gap-4 mt-2">
+                  <button
+                    onClick={() => setState("file-list")}
+                    className="text-sm text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Back to Files
+                  </button>
                   <button
                     onClick={() => setState("case-selection")}
                     className="text-sm text-blue-600 hover:text-blue-800 underline"

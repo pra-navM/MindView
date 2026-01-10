@@ -12,8 +12,9 @@ from scipy.ndimage import gaussian_filter
 from skimage.measure import marching_cubes
 import trimesh
 
-from database import connect_to_mongo, close_mongo_connection
-from routes import patients, cases
+from datetime import datetime
+from database import connect_to_mongo, close_mongo_connection, Database
+from routes import patients, cases, files
 
 app = FastAPI(title="MindView API", version="1.0.0")
 
@@ -42,6 +43,7 @@ async def shutdown_db():
 # Include routers
 app.include_router(patients.router, prefix="/api/patients", tags=["Patients"])
 app.include_router(cases.router, prefix="/api/cases", tags=["Medical Cases"])
+app.include_router(files.router, prefix="/api/files", tags=["Scan Files"])
 
 BASE_DIR = Path(__file__).parent
 UPLOAD_DIR = BASE_DIR / "storage" / "uploads"
@@ -285,9 +287,14 @@ def process_obj_to_glb(job_id: str, input_path: Path, output_path: Path) -> None
 
 
 @app.post("/api/upload", response_model=UploadResponse)
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    patient_id: int,
+    case_id: int,
+    file: UploadFile = File(...)
+):
     """Upload a NIfTI or OBJ file and start processing."""
     print(f"=== Upload request received ===")
+    print(f"Patient ID: {patient_id}, Case ID: {case_id}")
     print(f"Filename: {file.filename}")
 
     if not file.filename:
@@ -339,6 +346,32 @@ async def upload_file(file: UploadFile = File(...)):
 
     print(f"Processing complete. Status: {jobs[job_id]['status']}")
     print(f"Error: {jobs[job_id].get('error')}")
+
+    # Save file metadata to database
+    file_doc = {
+        "file_id": job_id,
+        "job_id": job_id,
+        "case_id": case_id,
+        "patient_id": patient_id,
+        "original_file": {
+            "filename": file.filename,
+            "content_type": file.content_type or "application/octet-stream",
+            "size_bytes": len(content),
+            "file_type": "nifti" if is_nifti else "obj"
+        },
+        "status": jobs[job_id]["status"],
+        "progress": jobs[job_id]["progress"],
+        "error": jobs[job_id].get("error"),
+        "uploaded_at": datetime.utcnow(),
+        "scan_timestamp": datetime.utcnow(),
+        "metadata": {}
+    }
+
+    try:
+        await Database.scan_files.insert_one(file_doc)
+        print(f"File metadata saved to database")
+    except Exception as db_err:
+        print(f"Warning: Failed to save file metadata to database: {db_err}")
 
     return UploadResponse(
         job_id=job_id,
