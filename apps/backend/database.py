@@ -1,4 +1,5 @@
 """Database connection and initialization using Motor (async MongoDB driver)."""
+import ssl
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorGridFSBucket
 from pymongo import ASCENDING, DESCENDING
 
@@ -21,8 +22,12 @@ class Database:
 async def connect_to_mongo():
     """Connect to MongoDB and initialize collections and indexes."""
     try:
-        print(f"Connecting to MongoDB at {settings.mongodb_uri[:20]}...")
-        Database.client = AsyncIOMotorClient(settings.mongodb_uri)
+        print(f"Connecting to MongoDB at {settings.mongodb_uri[:30]}...")
+        Database.client = AsyncIOMotorClient(
+            settings.mongodb_uri,
+            tls=True,
+            tlsAllowInvalidCertificates=True
+        )
         Database.db = Database.client[settings.database_name]
 
         # Initialize collections
