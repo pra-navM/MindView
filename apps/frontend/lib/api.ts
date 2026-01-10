@@ -116,3 +116,67 @@ export async function deletePatient(patientId: number, force: boolean = false): 
     throw new Error(error.detail || "Failed to delete patient");
   }
 }
+
+export interface MedicalCaseResponse {
+  case_id: number;
+  patient_id: number;
+  case_name: string;
+  diagnosis: string | null;
+  doctor_notes: string | null;
+  created_by: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export async function getCasesForPatient(patientId: number): Promise<MedicalCaseResponse[]> {
+  const response = await fetch(`${API_BASE_URL}/api/cases/?patient_id=${patientId}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || "Failed to get cases");
+  }
+
+  return response.json();
+}
+
+export interface CreateCaseRequest {
+  patient_id: number;
+  case_name: string;
+  diagnosis?: string;
+  doctor_notes?: string;
+}
+
+export async function createCase(caseData: CreateCaseRequest): Promise<MedicalCaseResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/cases/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(caseData),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || "Failed to create case");
+  }
+
+  return response.json();
+}
+
+export async function deleteCase(
+  patientId: number,
+  caseId: number,
+  force: boolean = false
+): Promise<void> {
+  const url = `${API_BASE_URL}/api/cases/${patientId}/${caseId}${force ? "?force=true" : ""}`;
+  const response = await fetch(url, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || "Failed to delete case");
+  }
+}

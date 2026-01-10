@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import dynamic from "next/dynamic";
 import PatientSelection from "@/components/PatientSelection";
+import CaseList from "@/components/CaseList";
 import FileUpload from "@/components/FileUpload";
 import ProcessingStatus from "@/components/ProcessingStatus";
 import { uploadFile, getMeshUrl } from "@/lib/api";
@@ -18,6 +19,7 @@ const BrainViewer = dynamic(() => import("@/components/BrainViewer"), {
 
 type AppState =
   | "patient-selection"
+  | "case-selection"
   | "file-upload"
   | "uploading"
   | "processing"
@@ -27,6 +29,8 @@ type AppState =
 export default function Home() {
   const [state, setState] = useState<AppState>("patient-selection");
   const [patientId, setPatientId] = useState<number | null>(null);
+  const [caseId, setCaseId] = useState<number | null>(null);
+  const [caseName, setCaseName] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [meshUrl, setMeshUrl] = useState<string | null>(null);
@@ -34,6 +38,12 @@ export default function Home() {
 
   const handlePatientSelected = useCallback((id: number) => {
     setPatientId(id);
+    setState("case-selection");
+  }, []);
+
+  const handleCaseSelected = useCallback((id: number, name: string) => {
+    setCaseId(id);
+    setCaseName(name);
     setState("file-upload");
   }, []);
 
@@ -65,7 +75,9 @@ export default function Home() {
   }, []);
 
   const handleReset = useCallback(() => {
-    setState("file-upload");
+    setState("case-selection");
+    setCaseId(null);
+    setCaseName(null);
     setProgress(0);
     setError(null);
     setMeshUrl(null);
@@ -75,6 +87,8 @@ export default function Home() {
   const handleChangePatient = useCallback(() => {
     setState("patient-selection");
     setPatientId(null);
+    setCaseId(null);
+    setCaseName(null);
     setProgress(0);
     setError(null);
     setMeshUrl(null);
@@ -95,19 +109,39 @@ export default function Home() {
           <PatientSelection onPatientSelected={handlePatientSelected} />
         )}
 
+        {state === "case-selection" && patientId !== null && (
+          <CaseList
+            patientId={patientId}
+            onCaseSelected={handleCaseSelected}
+            onChangePatient={handleChangePatient}
+          />
+        )}
+
         {state === "file-upload" && (
           <div className="max-w-2xl mx-auto">
             <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <p className="text-sm text-blue-800">
-                <span className="font-semibold">Selected Patient ID:</span>{" "}
-                {patientId}
-              </p>
-              <button
-                onClick={handleChangePatient}
-                className="mt-2 text-sm text-blue-600 hover:text-blue-800 underline"
-              >
-                Change Patient
-              </button>
+              <div className="text-sm text-blue-800">
+                <p>
+                  <span className="font-semibold">Patient ID:</span> {patientId}
+                </p>
+                <p className="mt-1">
+                  <span className="font-semibold">Case:</span> {caseName} (ID: {caseId})
+                </p>
+              </div>
+              <div className="flex gap-4 mt-2">
+                <button
+                  onClick={() => setState("case-selection")}
+                  className="text-sm text-blue-600 hover:text-blue-800 underline"
+                >
+                  Change Case
+                </button>
+                <button
+                  onClick={handleChangePatient}
+                  className="text-sm text-blue-600 hover:text-blue-800 underline"
+                >
+                  Change Patient
+                </button>
+              </div>
             </div>
             <FileUpload onFileSelect={handleFileSelect} />
           </div>
@@ -131,15 +165,26 @@ export default function Home() {
         {state === "viewing" && meshUrl && (
           <div className="w-full">
             <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3 max-w-2xl mx-auto">
-              <p className="text-sm text-blue-800">
-                <span className="font-semibold">Patient ID:</span> {patientId}
-                <button
-                  onClick={handleChangePatient}
-                  className="ml-4 text-sm text-blue-600 hover:text-blue-800 underline"
-                >
-                  Change Patient
-                </button>
-              </p>
+              <div className="text-sm text-blue-800">
+                <p>
+                  <span className="font-semibold">Patient ID:</span> {patientId} |
+                  <span className="font-semibold ml-2">Case:</span> {caseName} (ID: {caseId})
+                </p>
+                <div className="flex gap-4 mt-2">
+                  <button
+                    onClick={() => setState("case-selection")}
+                    className="text-sm text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Change Case
+                  </button>
+                  <button
+                    onClick={handleChangePatient}
+                    className="text-sm text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Change Patient
+                  </button>
+                </div>
+              </div>
             </div>
             <BrainViewer meshUrl={meshUrl} onReset={handleReset} />
           </div>

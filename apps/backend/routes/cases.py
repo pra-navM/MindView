@@ -12,7 +12,7 @@ router = APIRouter()
 
 @router.post("/", response_model=MedicalCaseResponse, status_code=201)
 async def create_case(case: MedicalCaseCreate):
-    """Create a new medical case."""
+    """Create a new medical case with auto-generated case_id."""
     try:
         # Verify patient exists
         patient = await Database.patients.find_one({"patient_id": case.patient_id})
@@ -22,9 +22,17 @@ async def create_case(case: MedicalCaseCreate):
                 detail=f"Patient '{case.patient_id}' not found. Create patient first.",
             )
 
+        # Find the highest case_id for this patient and increment by 1
+        last_case = await Database.medical_cases.find_one(
+            {"patient_id": case.patient_id},
+            sort=[("case_id", -1)]
+        )
+        next_case_id = 0 if last_case is None else last_case["case_id"] + 1
+
         # Create case document
         case_doc = {
             **case.model_dump(),
+            "case_id": next_case_id,
             "created_at": datetime.utcnow(),
             "updated_at": datetime.utcnow(),
         }
@@ -41,7 +49,7 @@ async def create_case(case: MedicalCaseCreate):
     except DuplicateKeyError:
         raise HTTPException(
             status_code=400,
-            detail=f"Case with ID '{case.case_id}' already exists",
+            detail=f"Case with ID '{next_case_id}' already exists for patient {case.patient_id}",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create case: {str(e)}")
@@ -49,7 +57,7 @@ async def create_case(case: MedicalCaseCreate):
 
 @router.get("/", response_model=List[MedicalCaseResponse])
 async def list_cases(
-    patient_id: Optional[str] = Query(None, description="Filter by patient ID"),
+    patient_id: Optional[int] = Query(None, description="Filter by patient ID"),
     status: Optional[str] = Query(None, description="Filter by status (active/closed/archived)"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=100, description="Maximum number of records to return"),
@@ -58,7 +66,7 @@ async def list_cases(
     try:
         # Build query filter
         query = {}
-        if patient_id:
+        if patient_id is not None:
             query["patient_id"] = patient_id
         if status:
             query["status"] = status
@@ -78,14 +86,20 @@ async def list_cases(
         raise HTTPException(status_code=500, detail=f"Failed to list cases: {str(e)}")
 
 
-@router.get("/{case_id}", response_model=MedicalCaseResponse)
-async def get_case(case_id: str):
-    """Get a single medical case by ID."""
+@router.get("/{patient_id}/{case_id}", response_model=MedicalCaseResponse)
+async def get_case(patient_id: int, case_id: int):
+    """Get a single medical case by patient ID and case ID."""
     try:
-        case = await Database.medical_cases.find_one({"case_id": case_id})
+        case = await Database.medical_cases.find_one({
+            "patient_id": patient_id,
+            "case_id": case_id
+        })
 
         if not case:
-            raise HTTPException(status_code=404, detail=f"Case '{case_id}' not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Case '{case_id}' not found for patient {patient_id}"
+            )
 
         return MedicalCaseResponse(**case)
 
@@ -95,22 +109,31 @@ async def get_case(case_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to get case: {str(e)}")
 
 
-@router.get("/{case_id}/files")
-async def get_case_files(case_id: str):
+@router.get("/{patient_id}/{case_id}/files")
+async def get_case_files(patient_id: int, case_id: int):
     """Get all scan files associated with a case."""
     try:
         # Verify case exists
-        case = await Database.medical_cases.find_one({"case_id": case_id})
+        case = await Database.medical_cases.find_one({
+            "patient_id": patient_id,
+            "case_id": case_id
+        })
         if not case:
-            raise HTTPException(status_code=404, detail=f"Case '{case_id}' not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Case '{case_id}' not found for patient {patient_id}"
+            )
 
         # Get all files for this case
-        cursor = Database.scan_files.find({"case_id": case_id}).sort("scan_timestamp", -1)
+        cursor = Database.scan_files.find({
+            "patient_id": patient_id,
+            "case_id": case_id
+        }).sort("scan_timestamp", -1)
         files = await cursor.to_list(length=None)
 
         return {
             "case_id": case_id,
-            "patient_id": case["patient_id"],
+            "patient_id": patient_id,
             "file_count": len(files),
             "files": files,
         }
@@ -121,8 +144,8 @@ async def get_case_files(case_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to get case files: {str(e)}")
 
 
-@router.put("/{case_id}", response_model=MedicalCaseResponse)
-async def update_case(case_id: str, case_update: MedicalCaseUpdate):
+@router.put("/{patient_id}/{case_id}", response_model=MedicalCaseResponse)
+async def update_case(patient_id: int, case_id: int, case_update: MedicalCaseUpdate):
     """Update medical case information."""
     try:
         # Build update document (only include fields that were provided)
@@ -137,14 +160,21 @@ async def update_case(case_id: str, case_update: MedicalCaseUpdate):
 
         # Update the case
         result = await Database.medical_cases.update_one(
-            {"case_id": case_id}, {"$set": update_data}
+            {"patient_id": patient_id, "case_id": case_id},
+            {"$set": update_data}
         )
 
         if result.matched_count == 0:
-            raise HTTPException(status_code=404, detail=f"Case '{case_id}' not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Case '{case_id}' not found for patient {patient_id}"
+            )
 
         # Retrieve and return updated case
-        updated_case = await Database.medical_cases.find_one({"case_id": case_id})
+        updated_case = await Database.medical_cases.find_one({
+            "patient_id": patient_id,
+            "case_id": case_id
+        })
         return MedicalCaseResponse(**updated_case)
 
     except HTTPException:
@@ -153,23 +183,54 @@ async def update_case(case_id: str, case_update: MedicalCaseUpdate):
         raise HTTPException(status_code=500, detail=f"Failed to update case: {str(e)}")
 
 
-@router.delete("/{case_id}", status_code=204)
-async def delete_case(case_id: str):
-    """Delete a medical case."""
+@router.delete("/{patient_id}/{case_id}", status_code=204)
+async def delete_case(
+    patient_id: int,
+    case_id: int,
+    force: bool = Query(False, description="Force delete case along with all scan files")
+):
+    """Delete a medical case and optionally all associated files."""
     try:
-        # Check if case has any scan files
-        file_count = await Database.scan_files.count_documents({"case_id": case_id})
-        if file_count > 0:
+        # Check if case exists
+        case = await Database.medical_cases.find_one({
+            "patient_id": patient_id,
+            "case_id": case_id
+        })
+        if not case:
             raise HTTPException(
-                status_code=400,
-                detail=f"Cannot delete case with {file_count} existing scan files. Delete files first.",
+                status_code=404,
+                detail=f"Case '{case_id}' not found for patient {patient_id}"
             )
 
+        if force:
+            # Delete all associated scan files
+            await Database.scan_files.delete_many({
+                "patient_id": patient_id,
+                "case_id": case_id
+            })
+        else:
+            # Check if case has any scan files
+            file_count = await Database.scan_files.count_documents({
+                "patient_id": patient_id,
+                "case_id": case_id
+            })
+            if file_count > 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot delete case with {file_count} existing scan files. Use force=true to delete all data.",
+                )
+
         # Delete the case
-        result = await Database.medical_cases.delete_one({"case_id": case_id})
+        result = await Database.medical_cases.delete_one({
+            "patient_id": patient_id,
+            "case_id": case_id
+        })
 
         if result.deleted_count == 0:
-            raise HTTPException(status_code=404, detail=f"Case '{case_id}' not found")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Case '{case_id}' not found for patient {patient_id}"
+            )
 
         return None
 
