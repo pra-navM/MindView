@@ -28,7 +28,6 @@ ENV/
 
 # Environment variables (IMPORTANT - contains MongoDB credentials)
 .env
-.env.example
 
 # IDE
 .vscode/
