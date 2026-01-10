@@ -235,7 +235,7 @@ export default function FileList({
                           {file.original_filename}
                         </h3>
                         <p className="text-sm text-gray-500">
-                          Uploaded {new Date(file.uploaded_at).toLocaleDateString()} •{" "}
+                          Scan Date: {new Date(file.scan_timestamp || file.uploaded_at).toLocaleDateString()} •{" "}
                           <span className="capitalize">{file.status}</span>
                           {file.error && ` • ${file.error}`}
                         </p>
