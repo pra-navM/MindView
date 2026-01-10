@@ -41,9 +41,11 @@ ENV/
 Thumbs.db
 
 # Application specific
-storage/
-*.nii
-*.nii.gz
+# storage/
+uploads/
+meshes/
+# *.nii
+# *.nii.gz
 *.obj
 *.glb
 *.mtl
