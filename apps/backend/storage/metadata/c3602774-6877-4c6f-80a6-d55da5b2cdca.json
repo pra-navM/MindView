@@ -1,0 +1,73 @@
+{
+  "regions": [
+    {
+      "name": "label_1",
+      "label": "Region 1",
+      "color": [
+        220,
+        180,
+        180
+      ],
+      "opacity": 1.0,
+      "defaultVisible": true
+    },
+    {
+      "name": "ventricles",
+      "label": "Ventricles",
+      "color": [
+        100,
+        150,
+        255
+      ],
+      "opacity": 0.3,
+      "defaultVisible": false
+    },
+    {
+      "name": "frontal_lobe",
+      "label": "Frontal Lobe",
+      "color": [
+        255,
+        180,
+        180
+      ],
+      "opacity": 0.3,
+      "defaultVisible": false
+    },
+    {
+      "name": "temporal_lobe",
+      "label": "Temporal Lobe",
+      "color": [
+        180,
+        255,
+        180
+      ],
+      "opacity": 0.3,
+      "defaultVisible": false
+    },
+    {
+      "name": "parietal_lobe",
+      "label": "Parietal Lobe",
+      "color": [
+        180,
+        180,
+        255
+      ],
+      "opacity": 0.3,
+      "defaultVisible": false
+    },
+    {
+      "name": "occipital_lobe",
+      "label": "Occipital Lobe",
+      "color": [
+        255,
+        255,
+        180
+      ],
+      "opacity": 0.3,
+      "defaultVisible": false
+    }
+  ],
+  "has_tumor": true,
+  "atlas_registered": true,
+  "input_type": "segmentation"
+}

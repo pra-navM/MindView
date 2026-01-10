@@ -22,6 +22,7 @@ export default function Home() {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [meshUrl, setMeshUrl] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
 
   const handleFileSelect = useCallback(async (file: File) => {
@@ -37,12 +38,14 @@ export default function Home() {
       if (response.status === "completed") {
         setProgress(100);
         setMeshUrl(getMeshUrl(response.job_id));
+        setJobId(response.job_id);
         setState("viewing");
       } else if (response.status === "failed") {
         throw new Error("Processing failed");
       } else {
         setProgress(response.status === "processing" ? 50 : 20);
         setMeshUrl(getMeshUrl(response.job_id));
+        setJobId(response.job_id);
         setState("viewing");
       }
     } catch (err) {
@@ -56,6 +59,7 @@ export default function Home() {
     setProgress(0);
     setError(null);
     setMeshUrl(null);
+    setJobId(null);
     setFileName(null);
   }, []);
 
@@ -90,9 +94,9 @@ export default function Home() {
           </div>
         )}
 
-        {state === "viewing" && meshUrl && (
+        {state === "viewing" && meshUrl && jobId && (
           <div className="w-full">
-            <BrainViewer meshUrl={meshUrl} onReset={handleReset} />
+            <BrainViewer meshUrl={meshUrl} jobId={jobId} onReset={handleReset} />
           </div>
         )}
 

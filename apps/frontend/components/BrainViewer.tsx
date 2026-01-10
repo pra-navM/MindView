@@ -1,14 +1,23 @@
 "use client";
 
-import { Suspense, useEffect, useState, useMemo } from "react";
+import { Suspense, useEffect, useState, useMemo, useCallback } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { TrackballControls, useGLTF, Center, Environment } from "@react-three/drei";
 import * as THREE from "three";
+import RegionControls from "./RegionControls";
+import { getMeshMetadata, type RegionInfo, type MeshMetadata } from "@/lib/api";
+
+interface RegionState {
+  visible: boolean;
+  opacity: number;
+}
 
 interface BrainModelProps {
   url: string;
   clippingEnabled: boolean;
   clippingPosition: number;
+  regionStates: Record<string, RegionState>;
+  regions: RegionInfo[];
 }
 
 function ClippingSetup({ enabled }: { enabled: boolean }) {
@@ -21,7 +30,7 @@ function ClippingSetup({ enabled }: { enabled: boolean }) {
   return null;
 }
 
-function BrainModel({ url, clippingEnabled, clippingPosition }: BrainModelProps) {
+function BrainModel({ url, clippingEnabled, clippingPosition, regionStates, regions }: BrainModelProps) {
   const { scene } = useGLTF(url);
 
   const clippingPlane = useMemo(() => {
@@ -32,37 +41,62 @@ function BrainModel({ url, clippingEnabled, clippingPosition }: BrainModelProps)
     clippingPlane.constant = clippingPosition;
   }, [clippingPlane, clippingPosition]);
 
+  // Create a map of region name to region info for quick lookup
+  const regionMap = useMemo(() => {
+    const map: Record<string, RegionInfo> = {};
+    regions.forEach((r) => {
+      map[r.name] = r;
+    });
+    return map;
+  }, [regions]);
+
   useEffect(() => {
     let meshIndex = 0;
-    const opacityLevels = [1.0, 1.0, 1.0, 1.0];
 
     scene.traverse((child) => {
       if (child instanceof THREE.Mesh) {
-        const hasVertexColors = child.geometry.attributes.color !== undefined;
-        const layerOpacity = opacityLevels[meshIndex % opacityLevels.length];
+        // Try to get region name from mesh name or metadata
+        const meshName = child.name || `mesh_${meshIndex}`;
+        const regionInfo = regionMap[meshName];
+        const regionState = regionStates[meshName];
 
         // Compute normals for proper lighting
         if (child.geometry) {
           child.geometry.computeVertexNormals();
         }
 
-        const material = new THREE.MeshPhongMaterial({
-          color: 0xcccccc,
-          specular: 0x444444,
-          shininess: 20,
-          flatShading: false,
-          side: THREE.DoubleSide,
-          depthWrite: true,
-          clippingPlanes: clippingEnabled ? [clippingPlane] : [],
-          clipShadows: true,
-        });
+        // Determine visibility
+        const isVisible = regionState?.visible ?? true;
+        child.visible = isVisible;
 
-        child.material = material;
-        child.renderOrder = meshIndex;
+        if (isVisible) {
+          // Determine opacity and color
+          const opacity = regionState?.opacity ?? regionInfo?.opacity ?? 1.0;
+          const color = regionInfo?.color
+            ? new THREE.Color(regionInfo.color[0] / 255, regionInfo.color[1] / 255, regionInfo.color[2] / 255)
+            : new THREE.Color(0xcccccc);
+
+          const material = new THREE.MeshPhongMaterial({
+            color: color,
+            specular: 0x444444,
+            shininess: 20,
+            flatShading: false,
+            side: THREE.DoubleSide,
+            depthWrite: opacity > 0.5,
+            transparent: opacity < 1.0,
+            opacity: opacity,
+            clippingPlanes: clippingEnabled ? [clippingPlane] : [],
+            clipShadows: true,
+          });
+
+          child.material = material;
+          child.renderOrder = opacity < 1.0 ? 100 + meshIndex : meshIndex;
+        }
+
         meshIndex++;
       }
     });
-  }, [scene, clippingEnabled, clippingPlane]);
+  }, [scene, clippingEnabled, clippingPlane, regionStates, regionMap]);
 
   return (
     <>
@@ -95,12 +129,79 @@ function LoadingSpinner() {
 
 interface BrainViewerProps {
   meshUrl: string;
+  jobId: string;
   onReset?: () => void;
 }
 
-export default function BrainViewer({ meshUrl, onReset }: BrainViewerProps) {
+export default function BrainViewer({ meshUrl, jobId, onReset }: BrainViewerProps) {
   const [clippingEnabled, setClippingEnabled] = useState(false);
   const [clippingPosition, setClippingPosition] = useState(100);
+  const [metadata, setMetadata] = useState<MeshMetadata | null>(null);
+  const [regionStates, setRegionStates] = useState<Record<string, RegionState>>({});
+  const [isolatedRegion, setIsolatedRegion] = useState<string | null>(null);
+
+  // Fetch metadata on mount
+  useEffect(() => {
+    if (jobId) {
+      getMeshMetadata(jobId)
+        .then((data) => {
+          setMetadata(data);
+          // Initialize region states from metadata
+          const initialStates: Record<string, RegionState> = {};
+          data.regions.forEach((region) => {
+            initialStates[region.name] = {
+              visible: region.defaultVisible,
+              opacity: region.opacity,
+            };
+          });
+          setRegionStates(initialStates);
+        })
+        .catch((err) => {
+          console.error("Failed to fetch metadata:", err);
+        });
+    }
+  }, [jobId]);
+
+  const handleVisibilityChange = useCallback((regionName: string, visible: boolean) => {
+    setRegionStates((prev) => ({
+      ...prev,
+      [regionName]: { ...prev[regionName], visible },
+    }));
+  }, []);
+
+  const handleOpacityChange = useCallback((regionName: string, opacity: number) => {
+    setRegionStates((prev) => ({
+      ...prev,
+      [regionName]: { ...prev[regionName], opacity },
+    }));
+  }, []);
+
+  const handleIsolate = useCallback((regionName: string | null) => {
+    setIsolatedRegion(regionName);
+
+    if (regionName === null) {
+      // Reset all to default visibility
+      setRegionStates((prev) => {
+        const newStates: Record<string, RegionState> = {};
+        Object.keys(prev).forEach((name) => {
+          newStates[name] = { ...prev[name], visible: true };
+        });
+        return newStates;
+      });
+    } else {
+      // Hide all except the isolated region (and tumor if present)
+      setRegionStates((prev) => {
+        const newStates: Record<string, RegionState> = {};
+        Object.keys(prev).forEach((name) => {
+          const shouldShow = name === regionName || name === "tumor";
+          newStates[name] = { ...prev[name], visible: shouldShow };
+        });
+        return newStates;
+      });
+    }
+  }, []);
+
+  const regions = metadata?.regions || [];
 
   return (
     <div className="relative w-full bg-gray-900 rounded-xl overflow-hidden" style={{ height: "70vh" }}>
@@ -125,6 +226,8 @@ export default function BrainViewer({ meshUrl, onReset }: BrainViewerProps) {
             url={meshUrl}
             clippingEnabled={clippingEnabled}
             clippingPosition={clippingPosition}
+            regionStates={regionStates}
+            regions={regions}
           />
           <Environment preset="studio" />
         </Suspense>
@@ -140,7 +243,24 @@ export default function BrainViewer({ meshUrl, onReset }: BrainViewerProps) {
         />
       </Canvas>
 
-      {/* Clipping Controls Panel */}
+      {/* Region Controls - Left Side */}
+      {metadata && metadata.regions.length > 0 && (
+        <div className="absolute top-4 left-4">
+          <RegionControls
+            regions={metadata.regions}
+            regionStates={regionStates}
+            onVisibilityChange={handleVisibilityChange}
+            onOpacityChange={handleOpacityChange}
+            onIsolate={handleIsolate}
+            isolatedRegion={isolatedRegion}
+            hasTumor={metadata.has_tumor}
+            atlasRegistered={metadata.atlas_registered}
+            inputType={metadata.input_type}
+          />
+        </div>
+      )}
+
+      {/* Clipping Controls Panel - Right Side */}
       <div className="absolute top-4 right-4 bg-black/70 backdrop-blur-sm rounded-lg p-4 flex flex-col gap-4">
         <div className="flex items-center gap-3">
           <span className="text-white text-sm font-medium">Clip</span>

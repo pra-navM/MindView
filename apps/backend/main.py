@@ -1,3 +1,4 @@
+import json
 import uuid
 from pathlib import Path
 from typing import Literal, Optional
@@ -6,7 +7,7 @@ import nibabel as nib
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from scipy.ndimage import gaussian_filter
 from skimage.measure import marching_cubes
@@ -14,6 +15,11 @@ import trimesh
 
 from database import connect_to_mongo, close_mongo_connection
 from routes import patients, cases
+from services.atlas_registration import (
+    process_with_atlas,
+    export_meshes_with_metadata,
+    check_atlas_files,
+)
 
 app = FastAPI(title="MindView API", version="1.0.0")
 
@@ -46,9 +52,13 @@ app.include_router(cases.router, prefix="/api/cases", tags=["Medical Cases"])
 BASE_DIR = Path(__file__).parent
 UPLOAD_DIR = BASE_DIR / "storage" / "uploads"
 MESH_DIR = BASE_DIR / "storage" / "meshes"
+METADATA_DIR = BASE_DIR / "storage" / "metadata"
+ATLAS_DIR = BASE_DIR / "storage" / "atlases"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MESH_DIR.mkdir(parents=True, exist_ok=True)
+METADATA_DIR.mkdir(parents=True, exist_ok=True)
+ATLAS_DIR.mkdir(parents=True, exist_ok=True)
 
 jobs: dict[str, dict] = {}
 
@@ -64,6 +74,7 @@ class StatusResponse(BaseModel):
     status: Literal["queued", "processing", "completed", "failed"]
     progress: int
     mesh_url: Optional[str] = None
+    metadata_url: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -220,8 +231,10 @@ def process_intensity_to_mesh(job_id: str, data: np.ndarray, spacing: tuple) -> 
     return meshes
 
 
-def process_nifti_to_mesh(job_id: str, input_path: Path, output_path: Path) -> None:
-    """Convert NIfTI file to GLB mesh - auto-detects segmentation vs intensity data."""
+def process_nifti_to_mesh(job_id: str, input_path: Path, output_path: Path, use_atlas: bool = True) -> None:
+    """Convert NIfTI file to GLB mesh with atlas-based segmentation."""
+    metadata_path = METADATA_DIR / f"{job_id}.json"
+
     try:
         jobs[job_id]["status"] = "processing"
         jobs[job_id]["progress"] = 10
@@ -234,29 +247,34 @@ def process_nifti_to_mesh(job_id: str, input_path: Path, output_path: Path) -> N
 
         jobs[job_id]["progress"] = 20
 
-        # Check if this is segmentation data or intensity data
-        if is_segmentation_data(data):
-            print(f"[{job_id}] Detected SEGMENTATION data - generating labeled structures")
-            meshes = process_segmentation_to_mesh(job_id, data, spacing, output_path)
+        # Check if this is segmentation data
+        is_seg = is_segmentation_data(data)
+        if is_seg:
+            print(f"[{job_id}] Detected SEGMENTATION data - will process labels directly")
         else:
-            print(f"[{job_id}] Detected INTENSITY data - generating isosurfaces")
-            meshes = process_intensity_to_mesh(job_id, data, spacing)
+            print(f"[{job_id}] Detected INTENSITY data - will use atlas registration")
 
-        jobs[job_id]["progress"] = 85
+        # Progress callback
+        def update_progress(progress: int):
+            jobs[job_id]["progress"] = progress
 
-        if not meshes:
-            raise ValueError("Could not generate any mesh surfaces from the scan")
+        # Use atlas pipeline (handles both segmentation and intensity data appropriately)
+        print(f"[{job_id}] Using atlas-based segmentation pipeline")
+        meshes, metadata = process_with_atlas(
+            job_id=job_id,
+            patient_mri_path=str(input_path),
+            patient_data=data,
+            spacing=spacing,
+            is_segmentation=is_seg,
+            progress_callback=update_progress
+        )
 
-        print(f"[{job_id}] Combining {len(meshes)} meshes...")
-        combined_mesh = trimesh.util.concatenate(meshes)
-        print(f"[{job_id}] Combined mesh: {len(combined_mesh.vertices)} vertices, {len(combined_mesh.faces)} faces")
+        jobs[job_id]["progress"] = 90
 
-        jobs[job_id]["progress"] = 95
+        # Export with metadata
+        export_meshes_with_metadata(meshes, metadata, output_path, metadata_path, job_id)
 
-        print(f"[{job_id}] Exporting to GLB...")
-        combined_mesh.export(str(output_path), file_type="glb")
-        print(f"[{job_id}] Export complete: {output_path}")
-
+        jobs[job_id]["metadata_path"] = str(metadata_path)
         jobs[job_id]["status"] = "completed"
         jobs[job_id]["progress"] = 100
         jobs[job_id]["mesh_path"] = str(output_path)
@@ -361,14 +379,46 @@ async def get_status(job_id: str):
 
     job = jobs[job_id]
     mesh_url = f"/api/mesh/{job_id}" if job["status"] == "completed" else None
+    metadata_url = f"/api/mesh/{job_id}/metadata" if job["status"] == "completed" else None
 
     return StatusResponse(
         job_id=job_id,
         status=job["status"],
         progress=job["progress"],
         mesh_url=mesh_url,
+        metadata_url=metadata_url,
         error=job.get("error"),
     )
+
+
+@app.get("/api/mesh/{job_id}/metadata")
+async def get_mesh_metadata(job_id: str):
+    """Get metadata for the generated mesh including region information."""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = jobs[job_id]
+
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Mesh not ready yet")
+
+    metadata_path = job.get("metadata_path")
+    if not metadata_path or not Path(metadata_path).exists():
+        # Return default metadata if not available
+        return JSONResponse({
+            "job_id": job_id,
+            "regions": [],
+            "has_tumor": False,
+            "atlas_registered": False,
+        })
+
+    with open(metadata_path, "r") as f:
+        metadata = json.load(f)
+
+    return JSONResponse({
+        "job_id": job_id,
+        **metadata
+    })
 
 
 @app.get("/api/mesh/{job_id}")

@@ -11,7 +11,24 @@ export interface StatusResponse {
   status: "queued" | "processing" | "completed" | "failed";
   progress: number;
   mesh_url: string | null;
+  metadata_url: string | null;
   error: string | null;
+}
+
+export interface RegionInfo {
+  name: string;
+  label: string;
+  color: [number, number, number];
+  opacity: number;
+  defaultVisible: boolean;
+}
+
+export interface MeshMetadata {
+  job_id: string;
+  regions: RegionInfo[];
+  has_tumor: boolean;
+  atlas_registered: boolean;
+  input_type?: "segmentation" | "intensity";
 }
 
 export async function uploadFile(file: File): Promise<UploadResponse> {
@@ -37,6 +54,17 @@ export async function getStatus(jobId: string): Promise<StatusResponse> {
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || "Failed to get status");
+  }
+
+  return response.json();
+}
+
+export async function getMeshMetadata(jobId: string): Promise<MeshMetadata> {
+  const response = await fetch(`${API_BASE_URL}/api/mesh/${jobId}/metadata`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || "Failed to get metadata");
   }
 
   return response.json();

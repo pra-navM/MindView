@@ -1,0 +1,50 @@
+{
+  "regions": [
+    {
+      "name": "brain_shell",
+      "label": "Brain Shell",
+      "color": [
+        180,
+        180,
+        180
+      ],
+      "opacity": 0.3,
+      "defaultVisible": true
+    },
+    {
+      "name": "layer_0",
+      "label": "Layer 1",
+      "color": [
+        150,
+        150,
+        150
+      ],
+      "opacity": 0.7,
+      "defaultVisible": true
+    },
+    {
+      "name": "layer_1",
+      "label": "Layer 2",
+      "color": [
+        150,
+        150,
+        150
+      ],
+      "opacity": 0.7,
+      "defaultVisible": true
+    },
+    {
+      "name": "tumor",
+      "label": "Tumor",
+      "color": [
+        255,
+        80,
+        80
+      ],
+      "opacity": 1.0,
+      "defaultVisible": true
+    }
+  ],
+  "has_tumor": true,
+  "atlas_registered": false
+}

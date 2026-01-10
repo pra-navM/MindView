@@ -1,0 +1,17 @@
+{
+  "regions": [
+    {
+      "name": "label_1",
+      "label": "Region 1",
+      "color": [
+        220,
+        180,
+        180
+      ],
+      "opacity": 1.0,
+      "defaultVisible": true
+    }
+  ],
+  "has_tumor": true,
+  "atlas_registered": false
+}
