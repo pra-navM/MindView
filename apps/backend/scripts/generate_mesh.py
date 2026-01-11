@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""Generate OBJ mesh from NIfTI brain scan using tumor-first pipeline.
+"""Generate OBJ mesh from NIfTI brain scan.
 
-Pipeline:
-1. Run MONAI tumor detection (requires 4 modalities: T1, T1ce, T2, FLAIR)
-2. Mask out tumor regions from T1
-3. Run ANTsPyNet deep_atropos on masked brain
-4. Combine tumor + anatomical segmentations
-5. Generate OBJ mesh
+Modes:
+1. Multi-modal (T1, T1ce, T2, FLAIR): Runs MONAI tumor detection, generates mesh
+2. Pre-segmented NIfTI: Directly generates mesh from segmentation labels
 """
 import sys
 from pathlib import Path
@@ -22,158 +19,26 @@ from scipy.ndimage import gaussian_filter
 from skimage.measure import marching_cubes
 import trimesh
 
-from services.synthseg_inference import run_synthseg
-from services.tumor_inference import run_tumor_detection, TumorInference
-from services.synthseg_service import get_label_info, remap_brats_labels
+from services.tumor_inference import run_tumor_detection
+from services.synthseg_service import get_label_info
 
 
-def run_pipeline(
-    t1_path: Path,
+def generate_mesh_from_segmentation(
+    segmentation_path: Path,
     output_dir: Path,
-    t1ce_path: Path = None,
-    t2_path: Path = None,
-    flair_path: Path = None,
     job_id: str = "cli"
 ):
-    """
-    Run full pipeline: tumor detection -> masked segmentation -> mesh generation.
-
-    If all 4 modalities provided: runs tumor detection first, masks tumor, then anatomical.
-    If only T1: runs anatomical segmentation only.
-    """
+    """Generate OBJ mesh from a pre-segmented NIfTI file."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Output paths
-    tumor_seg_path = output_dir / f"{job_id}_tumor.nii.gz"
-    anatomical_seg_path = output_dir / f"{job_id}_anatomical.nii.gz"
-    combined_seg_path = output_dir / f"{job_id}_combined.nii.gz"
     obj_path = output_dir / f"{job_id}_brain.obj"
     metadata_path = output_dir / f"{job_id}_metadata.json"
 
-    has_multimodal = all([t1ce_path, t2_path, flair_path])
-    tumor_seg = None
-
-    # Step 1: Run tumor detection if we have all modalities
-    if has_multimodal:
-        print(f"\n{'='*60}")
-        print("Step 1: Running tumor detection (MONAI SegResNet)...")
-        print(f"{'='*60}")
-
-        modality_paths = {
-            "t1": t1_path,
-            "t1ce": t1ce_path,
-            "t2": t2_path,
-            "flair": flair_path
-        }
-
-        tumor_seg = run_tumor_detection(
-            modality_paths,
-            tumor_seg_path,
-            t1ce_path,  # Reference for affine
-            progress_callback=lambda p: print(f"  Tumor detection: {p}%")
-        )
-
-        if tumor_seg is not None and np.any(tumor_seg > 0):
-            tumor_voxels = np.sum(tumor_seg > 0)
-            print(f"Tumor detected: {tumor_voxels} voxels")
-        else:
-            print("No tumor detected")
-            tumor_seg = None
-    else:
-        print(f"\n{'='*60}")
-        print("Step 1: Skipping tumor detection (need all 4 modalities)")
-        print(f"{'='*60}")
-        print(f"  T1: {t1_path}")
-        print(f"  T1ce: {t1ce_path}")
-        print(f"  T2: {t2_path}")
-        print(f"  FLAIR: {flair_path}")
-
-    # Step 2: Mask out tumor from T1 if tumor was found
     print(f"\n{'='*60}")
-    print("Step 2: Preparing brain for anatomical segmentation...")
+    print("Generating 3D mesh from segmentation...")
     print(f"{'='*60}")
 
-    if tumor_seg is not None and np.any(tumor_seg > 0):
-        print("Masking out tumor regions from T1...")
-
-        # Load T1
-        t1_img = nib.load(str(t1_path))
-        t1_data = t1_img.get_fdata()
-
-        # Create tumor mask (any tumor label > 0)
-        # tumor_seg uses remapped labels: 100=necrotic, 101=edema, 102=enhancing
-        tumor_mask = tumor_seg > 0
-
-        # Dilate tumor mask slightly to ensure clean boundaries
-        from scipy.ndimage import binary_dilation
-        tumor_mask_dilated = binary_dilation(tumor_mask, iterations=2)
-
-        # Fill tumor region with surrounding tissue intensity (inpainting)
-        # Simple approach: use median of non-tumor brain tissue
-        brain_mask = t1_data > np.percentile(t1_data[t1_data > 0], 10)
-        non_tumor_brain = t1_data[brain_mask & ~tumor_mask_dilated]
-        fill_value = np.median(non_tumor_brain) if len(non_tumor_brain) > 0 else 0
-
-        t1_masked = t1_data.copy()
-        t1_masked[tumor_mask_dilated] = fill_value
-
-        # Save masked T1 for processing
-        masked_t1_path = output_dir / f"{job_id}_t1_masked.nii.gz"
-        masked_img = nib.Nifti1Image(t1_masked.astype(np.float32), t1_img.affine)
-        nib.save(masked_img, str(masked_t1_path))
-
-        input_for_synthseg = masked_t1_path
-        print(f"Masked T1 saved to: {masked_t1_path}")
-    else:
-        input_for_synthseg = t1_path
-        print("No tumor to mask, using original T1")
-
-    # Step 3: Run anatomical segmentation
-    print(f"\n{'='*60}")
-    print("Step 3: Running anatomical segmentation (ANTsPyNet deep_atropos)...")
-    print(f"{'='*60}")
-
-    anatomical_seg = run_synthseg(
-        input_path=input_for_synthseg,
-        output_path=anatomical_seg_path,
-        flair_path=flair_path if has_multimodal else None,
-        t2_path=t2_path if has_multimodal else None,
-        progress_callback=lambda p: print(f"  Anatomical segmentation: {p}%")
-    )
-
-    print(f"Anatomical segmentation saved to: {anatomical_seg_path}")
-
-    # Step 4: Combine segmentations
-    print(f"\n{'='*60}")
-    print("Step 4: Combining segmentations...")
-    print(f"{'='*60}")
-
-    if tumor_seg is not None and np.any(tumor_seg > 0):
-        # Combine: anatomical as base, tumor overlaid
-        combined = anatomical_seg.copy()
-
-        # Overlay tumor labels (they take precedence)
-        tumor_mask = tumor_seg > 0
-        combined[tumor_mask] = tumor_seg[tumor_mask]
-
-        # Save combined
-        ref_img = nib.load(str(t1_path))
-        combined_img = nib.Nifti1Image(combined.astype(np.int16), ref_img.affine)
-        nib.save(combined_img, str(combined_seg_path))
-
-        final_seg_path = combined_seg_path
-        print(f"Combined segmentation saved to: {combined_seg_path}")
-    else:
-        final_seg_path = anatomical_seg_path
-        combined = anatomical_seg
-        print("No tumor, using anatomical segmentation only")
-
-    # Step 5: Generate mesh
-    print(f"\n{'='*60}")
-    print("Step 5: Generating 3D mesh...")
-    print(f"{'='*60}")
-
-    img = nib.load(str(final_seg_path))
+    img = nib.load(str(segmentation_path))
     data = img.get_fdata().astype(np.int32)
     spacing = img.header.get_zooms()[:3]
 
@@ -248,9 +113,7 @@ def run_pipeline(
         raise ValueError("No meshes could be generated")
 
     # Export combined OBJ
-    print(f"\n{'='*60}")
-    print("Step 6: Exporting to OBJ format...")
-    print(f"{'='*60}")
+    print(f"\nExporting to OBJ format...")
 
     scene = trimesh.Scene()
     for mesh in meshes:
@@ -272,17 +135,14 @@ def run_pipeline(
     print(f"Individual region OBJs saved to: {individual_dir}")
 
     # Save metadata
-    has_tumor = tumor_seg is not None and np.any(tumor_seg > 0)
+    has_tumor = any(r["category"] == "tumor" for r in regions_metadata)
     metadata = {
         "regions": regions_metadata,
         "has_tumor": has_tumor,
         "total_regions": len(regions_metadata),
-        "segmentation_method": "tumor_first_pipeline",
+        "segmentation_method": "pre_segmented",
         "files": {
             "combined_obj": str(obj_path),
-            "combined_segmentation": str(final_seg_path),
-            "anatomical_segmentation": str(anatomical_seg_path),
-            "tumor_segmentation": str(tumor_seg_path) if has_tumor else None,
             "individual_regions": str(individual_dir)
         }
     }
@@ -291,49 +151,114 @@ def run_pipeline(
         json.dump(metadata, f, indent=2)
 
     print(f"\n{'='*60}")
-    print("Pipeline complete!")
+    print("Mesh generation complete!")
     print(f"{'='*60}")
-    print(f"  Combined OBJ: {obj_path}")
-    print(f"  Segmentation: {final_seg_path}")
+    print(f"  OBJ: {obj_path}")
     print(f"  Metadata: {metadata_path}")
-    print(f"  Tumor found: {has_tumor}")
 
     return obj_path
 
 
+def run_tumor_pipeline(
+    t1_path: Path,
+    t1ce_path: Path,
+    t2_path: Path,
+    flair_path: Path,
+    output_dir: Path,
+    job_id: str = "cli"
+):
+    """Run MONAI tumor detection on multi-modal MRI and generate mesh."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    tumor_seg_path = output_dir / f"{job_id}_tumor.nii.gz"
+    obj_path = output_dir / f"{job_id}_tumor.obj"
+    metadata_path = output_dir / f"{job_id}_metadata.json"
+
+    print(f"\n{'='*60}")
+    print("Step 1: Running tumor detection (MONAI SegResNet)...")
+    print(f"{'='*60}")
+
+    modality_paths = {
+        "t1": t1_path,
+        "t1ce": t1ce_path,
+        "t2": t2_path,
+        "flair": flair_path
+    }
+
+    tumor_seg = run_tumor_detection(
+        modality_paths,
+        tumor_seg_path,
+        t1ce_path,
+        progress_callback=lambda p: print(f"  Tumor detection: {p}%")
+    )
+
+    if tumor_seg is None or not np.any(tumor_seg > 0):
+        print("No tumor detected in scan")
+        metadata = {
+            "regions": [],
+            "has_tumor": False,
+            "total_regions": 0,
+            "segmentation_method": "monai_tumor_detection",
+        }
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        return None
+
+    tumor_voxels = np.sum(tumor_seg > 0)
+    print(f"Tumor detected: {tumor_voxels} voxels")
+
+    # Generate mesh from tumor segmentation
+    print(f"\n{'='*60}")
+    print("Step 2: Generating 3D mesh from tumor segmentation...")
+    print(f"{'='*60}")
+
+    return generate_mesh_from_segmentation(tumor_seg_path, output_dir, job_id)
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate OBJ mesh from brain MRI using tumor-first pipeline"
+        description="Generate OBJ mesh from brain MRI segmentation or run tumor detection"
     )
-    parser.add_argument("t1", type=Path, help="T1 NIfTI file (.nii or .nii.gz)")
-    parser.add_argument("--t1ce", type=Path, help="T1ce (contrast-enhanced) NIfTI")
-    parser.add_argument("--t2", type=Path, help="T2 NIfTI")
-    parser.add_argument("--flair", type=Path, help="FLAIR NIfTI")
+    parser.add_argument("input", type=Path, help="Input NIfTI file (segmentation or T1 for tumor mode)")
+    parser.add_argument("--t1ce", type=Path, help="T1ce for tumor detection mode")
+    parser.add_argument("--t2", type=Path, help="T2 for tumor detection mode")
+    parser.add_argument("--flair", type=Path, help="FLAIR for tumor detection mode")
     parser.add_argument("-o", "--output", type=Path, default=None, help="Output directory")
     parser.add_argument("--job-id", type=str, default="brain", help="Job ID for output files")
 
     args = parser.parse_args()
 
-    if not args.t1.exists():
-        print(f"Error: T1 file not found: {args.t1}")
+    if not args.input.exists():
+        print(f"Error: Input file not found: {args.input}")
         sys.exit(1)
 
-    # Validate optional modalities
-    for name, path in [("t1ce", args.t1ce), ("t2", args.t2), ("flair", args.flair)]:
-        if path and not path.exists():
-            print(f"Error: {name} file not found: {path}")
-            sys.exit(1)
+    output_dir = args.output or args.input.parent / "output"
 
-    output_dir = args.output or args.t1.parent / "output"
+    # Check if running in tumor detection mode (all 4 modalities provided)
+    has_multimodal = all([args.t1ce, args.t2, args.flair])
 
-    run_pipeline(
-        t1_path=args.t1,
-        output_dir=output_dir,
-        t1ce_path=args.t1ce,
-        t2_path=args.t2,
-        flair_path=args.flair,
-        job_id=args.job_id
-    )
+    if has_multimodal:
+        # Validate all files exist
+        for name, path in [("t1ce", args.t1ce), ("t2", args.t2), ("flair", args.flair)]:
+            if not path.exists():
+                print(f"Error: {name} file not found: {path}")
+                sys.exit(1)
+
+        run_tumor_pipeline(
+            t1_path=args.input,
+            t1ce_path=args.t1ce,
+            t2_path=args.t2,
+            flair_path=args.flair,
+            output_dir=output_dir,
+            job_id=args.job_id
+        )
+    else:
+        # Treat input as pre-segmented NIfTI
+        generate_mesh_from_segmentation(
+            segmentation_path=args.input,
+            output_dir=output_dir,
+            job_id=args.job_id
+        )
 
 
 if __name__ == "__main__":
