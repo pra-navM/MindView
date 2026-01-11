@@ -61,6 +61,43 @@ export async function uploadFile(
   return response.json();
 }
 
+export interface MultiModalFiles {
+  t1: File;
+  t1ce: File;
+  t2: File;
+  flair: File;
+}
+
+export async function uploadMultiModalFiles(
+  files: MultiModalFiles,
+  patientId: number,
+  caseId: number,
+  scanDate?: string
+): Promise<UploadResponse> {
+  const formData = new FormData();
+  formData.append("t1", files.t1);
+  formData.append("t1ce", files.t1ce);
+  formData.append("t2", files.t2);
+  formData.append("flair", files.flair);
+
+  let url = `${API_BASE_URL}/api/upload-multimodal?patient_id=${patientId}&case_id=${caseId}`;
+  if (scanDate) {
+    url += `&scan_date=${encodeURIComponent(scanDate)}`;
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || "Multi-modal upload failed");
+  }
+
+  return response.json();
+}
+
 export async function getStatus(jobId: string): Promise<StatusResponse> {
   const response = await fetch(`${API_BASE_URL}/api/status/${jobId}`);
 

@@ -6,10 +6,11 @@ import PatientSelection from "@/components/PatientSelection";
 import CaseList from "@/components/CaseList";
 import FileList from "@/components/FileList";
 import FileUpload from "@/components/FileUpload";
+import MultiModalUpload from "@/components/MultiModalUpload";
 import ProcessingStatus from "@/components/ProcessingStatus";
 import RegionControls from "@/components/RegionControls";
+import { uploadFile, uploadMultiModalFiles, getMeshUrl, getMetadata, MeshMetadata, RegionInfo, MultiModalFiles } from "@/lib/api";
 import NotesPanel from "@/components/NotesPanel";
-import { uploadFile, getMeshUrl, getMetadata, MeshMetadata, RegionInfo } from "@/lib/api";
 
 const BrainViewer = dynamic(() => import("@/components/BrainViewer"), {
   ssr: false,
@@ -47,6 +48,7 @@ export default function Home() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [metadata, setMetadata] = useState<MeshMetadata | null>(null);
   const [regionStates, setRegionStates] = useState<Record<string, RegionState>>({});
+  const [uploadMode, setUploadMode] = useState<"single" | "multimodal">("single");
 
   // Fetch metadata when jobId changes and we're in viewing state
   useEffect(() => {
@@ -110,6 +112,43 @@ export default function Home() {
       setProgress(10);
 
       const response = await uploadFile(file, patientId, caseId, scanDate);
+      setJobId(response.job_id);
+
+      if (response.status === "completed") {
+        setProgress(100);
+        setMeshUrl(getMeshUrl(response.job_id));
+        setState("viewing");
+      } else if (response.status === "failed") {
+        throw new Error("Processing failed");
+      } else {
+        setProgress(response.status === "processing" ? 50 : 20);
+        setMeshUrl(getMeshUrl(response.job_id));
+        setState("viewing");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred");
+      setState("error");
+    }
+  }, [patientId, caseId]);
+
+  const handleMultiModalFilesSelect = useCallback(async (files: MultiModalFiles, scanDate?: string) => {
+    if (patientId === null || caseId === null) {
+      setError("Patient ID and Case ID are required");
+      setState("error");
+      return;
+    }
+
+    setFileName(`Multi-modal: ${files.t1.name} + 3 others`);
+    setState("uploading");
+    setProgress(0);
+    setError(null);
+    setMetadata(null);
+    setRegionStates({});
+
+    try {
+      setProgress(10);
+
+      const response = await uploadMultiModalFiles(files, patientId, caseId, scanDate);
       setJobId(response.job_id);
 
       if (response.status === "completed") {
@@ -257,7 +296,36 @@ export default function Home() {
                 </button>
               </div>
             </div>
-            <FileUpload onFileSelect={handleFileSelect} />
+
+            {/* Upload Mode Toggle */}
+            <div className="mb-6 flex rounded-lg overflow-hidden border border-gray-300">
+              <button
+                onClick={() => setUploadMode("single")}
+                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+                  uploadMode === "single"
+                    ? "bg-blue-600 text-white"
+                    : "bg-white text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                Single File
+              </button>
+              <button
+                onClick={() => setUploadMode("multimodal")}
+                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${
+                  uploadMode === "multimodal"
+                    ? "bg-blue-600 text-white"
+                    : "bg-white text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                Multi-Modal (T1, T1ce, T2, FLAIR)
+              </button>
+            </div>
+
+            {uploadMode === "single" ? (
+              <FileUpload onFileSelect={handleFileSelect} />
+            ) : (
+              <MultiModalUpload onFilesSelect={handleMultiModalFilesSelect} />
+            )}
           </div>
         )}
 

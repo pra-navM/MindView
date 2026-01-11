@@ -20,12 +20,13 @@ from services.synthseg_service import (
     get_label_info,
     detect_segmentation_type,
     remap_brats_labels,
+    merge_segmentations,
     SYNTHSEG_LABELS,
     TUMOR_LABELS,
 )
 from services.mesh_generation import segmentation_to_meshes, intensity_to_meshes
-from services.segmentation_service import run_auto_segmentation
 from services.model_manager import SegmentationError
+from services.tumor_inference import TumorInference, run_tumor_detection
 
 app = FastAPI(title="MindView API", version="1.0.0")
 
@@ -256,53 +257,29 @@ def process_nifti_to_mesh(job_id: str, input_path: Path, output_path: Path) -> N
 
         jobs[job_id]["progress"] = 15
 
-        # Always run segmentation regardless of input type
-        seg_type = 'intensity'
-        print(f"[{job_id}] Forcing auto-segmentation (ignoring existing labels)")
-
         def update_progress(p):
             jobs[job_id]["progress"] = p
 
+        # Detect if input is already segmented or raw intensity data
+        seg_type = detect_segmentation_type(data)
+        print(f"[{job_id}] Detected data type: {seg_type}")
+
         if seg_type == 'intensity':
-            # Raw intensity data - run auto-segmentation with SynthSeg
-            print(f"[{job_id}] Processing as INTENSITY data - running auto-segmentation")
-            jobs[job_id]["status_message"] = "Running brain segmentation (this may take 2-5 minutes)..."
+            # Raw intensity data - generate intensity-based mesh
+            print(f"[{job_id}] Processing as INTENSITY data")
+            jobs[job_id]["status_message"] = "Generating intensity-based visualization..."
 
-            try:
-                # Run SynthSeg to create segmentation
-                segmentation_path, seg_metadata = run_auto_segmentation(
-                    input_path,
-                    SEGMENTATION_DIR,
-                    job_id,
-                    progress_callback=update_progress
-                )
-
-                print(f"[{job_id}] Auto-segmentation complete, generating mesh...")
-                jobs[job_id]["status_message"] = "Generating 3D visualization..."
-
-                # Generate mesh from the segmentation
-                segmentation_to_meshes(
-                    segmentation_path,
-                    output_path,
-                    metadata_path,
-                    job_id,
-                    progress_callback=update_progress
-                )
-
-            except SegmentationError as seg_err:
-                # Fallback to intensity-based if segmentation fails
-                print(f"[{job_id}] Segmentation failed, falling back to intensity-based: {seg_err}")
-                jobs[job_id]["status_message"] = "Generating intensity-based visualization..."
-                intensity_to_meshes(
-                    input_path,
-                    output_path,
-                    metadata_path,
-                    job_id,
-                    progress_callback=update_progress
-                )
+            intensity_to_meshes(
+                input_path,
+                output_path,
+                metadata_path,
+                job_id,
+                progress_callback=update_progress
+            )
         else:
-            # Segmentation data (brats, synthseg, or simple)
+            # Already segmented data (brats, synthseg, or simple labels)
             print(f"[{job_id}] Processing as SEGMENTATION data ({seg_type})")
+            jobs[job_id]["status_message"] = "Generating 3D visualization from segmentation..."
 
             # If BraTS, remap labels first
             if seg_type == 'brats':
@@ -462,6 +439,216 @@ async def upload_file(
         job_id=job_id,
         status=jobs[job_id]["status"],
         message="File uploaded and processed",
+    )
+
+
+def process_multimodal_to_mesh(
+    job_id: str,
+    modality_paths: dict,
+    output_path: Path,
+    metadata_path: Path
+) -> None:
+    """
+    Process multi-modal MRI (T1, T1ce, T2, FLAIR) for tumor detection and mesh generation.
+
+    Pipeline:
+    1. Run MONAI SegResNet tumor detection on all 4 modalities
+    2. Generate 3D mesh from tumor segmentation
+    """
+    try:
+        jobs[job_id]["status"] = "processing"
+        jobs[job_id]["status_message"] = "Starting tumor detection..."
+        jobs[job_id]["progress"] = 5
+
+        def update_progress(p):
+            jobs[job_id]["progress"] = p
+
+        t1ce_path = modality_paths["t1ce"]
+
+        # Step 1: Run MONAI tumor detection
+        print(f"[{job_id}] Step 1: Running tumor detection on multi-modal input...")
+        jobs[job_id]["status_message"] = "Detecting tumors (MONAI SegResNet)..."
+
+        tumor_output = SEGMENTATION_DIR / f"{job_id}_tumor.nii.gz"
+
+        tumor_seg = run_tumor_detection(
+            modality_paths,
+            tumor_output,
+            t1ce_path,  # T1ce as reference for affine/shape
+            progress_callback=lambda p: update_progress(5 + int(p * 0.6))  # 5-65%
+        )
+
+        has_tumor = tumor_seg is not None and np.any(tumor_seg > 0)
+        print(f"[{job_id}] Tumor detection complete. Tumor found: {has_tumor}")
+        jobs[job_id]["progress"] = 70
+
+        if not has_tumor:
+            print(f"[{job_id}] No tumor detected in scan")
+            jobs[job_id]["status"] = "completed"
+            jobs[job_id]["progress"] = 100
+            jobs[job_id]["status_message"] = "No tumor detected"
+
+            # Save empty metadata
+            metadata = {
+                "regions": [],
+                "has_tumor": False,
+                "total_regions": 0,
+                "segmentation_method": "monai_tumor_detection",
+            }
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f)
+            return
+
+        # Step 2: Generate mesh from tumor segmentation
+        print(f"[{job_id}] Step 2: Generating 3D mesh from tumor segmentation...")
+        jobs[job_id]["status_message"] = "Generating 3D visualization..."
+
+        segmentation_to_meshes(
+            tumor_output,
+            output_path,
+            metadata_path,
+            job_id,
+            progress_callback=lambda p: update_progress(70 + int(p * 0.3))  # 70-100%
+        )
+
+        # Update metadata with tumor flag
+        if metadata_path.exists():
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+            metadata["has_tumor"] = True
+            metadata["segmentation_method"] = "monai_tumor_detection"
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f)
+
+        jobs[job_id]["status"] = "completed"
+        jobs[job_id]["progress"] = 100
+        jobs[job_id]["mesh_path"] = str(output_path)
+        jobs[job_id]["metadata_path"] = str(metadata_path)
+        jobs[job_id]["status_message"] = "Processing complete!"
+        print(f"[{job_id}] Tumor detection and mesh generation complete!")
+
+    except Exception as e:
+        print(f"[{job_id}] ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["error"] = str(e)
+
+
+@app.post("/api/upload-multimodal", response_model=UploadResponse)
+async def upload_multimodal_files(
+    patient_id: int,
+    case_id: int,
+    t1: UploadFile = File(...),
+    t1ce: UploadFile = File(...),
+    t2: UploadFile = File(...),
+    flair: UploadFile = File(...),
+    scan_date: Optional[str] = None
+):
+    """
+    Upload 4 MRI modalities (T1, T1ce, T2, FLAIR) for combined segmentation.
+
+    This endpoint runs both anatomical (ANTsPyNet) and tumor (MONAI SegResNet)
+    segmentation, then merges the results into a single 3D visualization.
+    """
+    print(f"=== Multi-modal upload request received ===")
+    print(f"Patient ID: {patient_id}, Case ID: {case_id}")
+    print(f"Files: T1={t1.filename}, T1ce={t1ce.filename}, T2={t2.filename}, FLAIR={flair.filename}")
+
+    # Validate all files are NIfTI
+    for name, file in [("t1", t1), ("t1ce", t1ce), ("t2", t2), ("flair", flair)]:
+        if not file.filename:
+            raise HTTPException(status_code=400, detail=f"No file provided for {name}")
+        if not (file.filename.endswith(".nii") or file.filename.endswith(".nii.gz")):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file format for {name}. Please upload a .nii or .nii.gz file"
+            )
+
+    job_id = str(uuid.uuid4())
+    print(f"Job ID: {job_id}")
+
+    # Save all 4 files
+    modality_paths = {}
+    total_size = 0
+
+    for name, file in [("t1", t1), ("t1ce", t1ce), ("t2", t2), ("flair", flair)]:
+        ext = ".nii.gz" if file.filename.endswith(".nii.gz") else ".nii"
+        file_path = UPLOAD_DIR / f"{job_id}_{name}{ext}"
+
+        content = await file.read()
+        total_size += len(content)
+
+        with open(file_path, "wb") as f:
+            f.write(content)
+
+        modality_paths[name] = file_path
+        print(f"Saved {name}: {file_path} ({len(content)} bytes)")
+
+    output_path = MESH_DIR / f"{job_id}.glb"
+    metadata_path = METADATA_DIR / f"{job_id}.json"
+
+    # Initialize job
+    jobs[job_id] = {
+        "status": "queued",
+        "progress": 0,
+        "status_message": "Preparing multi-modal processing...",
+        "input_paths": {k: str(v) for k, v in modality_paths.items()},
+        "mesh_path": None,
+        "metadata_path": None,
+        "error": None,
+    }
+
+    # Process synchronously (can be made async with background tasks if needed)
+    print(f"Starting multi-modal processing...")
+    process_multimodal_to_mesh(job_id, modality_paths, output_path, metadata_path)
+
+    print(f"Processing complete. Status: {jobs[job_id]['status']}")
+
+    # Parse scan_date if provided
+    scan_timestamp = datetime.utcnow()
+    if scan_date:
+        try:
+            scan_timestamp = datetime.fromisoformat(scan_date.replace('Z', '+00:00'))
+        except Exception as e:
+            print(f"Warning: Failed to parse scan_date '{scan_date}': {e}")
+
+    # Save file metadata to database
+    file_doc = {
+        "file_id": job_id,
+        "job_id": job_id,
+        "case_id": case_id,
+        "patient_id": patient_id,
+        "original_file": {
+            "filename": f"multimodal_{t1.filename}",
+            "content_type": "application/octet-stream",
+            "size_bytes": total_size,
+            "file_type": "multimodal_nifti",
+            "modalities": {
+                "t1": t1.filename,
+                "t1ce": t1ce.filename,
+                "t2": t2.filename,
+                "flair": flair.filename
+            }
+        },
+        "status": jobs[job_id]["status"],
+        "progress": jobs[job_id]["progress"],
+        "error": jobs[job_id].get("error"),
+        "uploaded_at": datetime.utcnow(),
+        "scan_timestamp": scan_timestamp,
+        "metadata": {"multimodal": True}
+    }
+
+    try:
+        await Database.scan_files.insert_one(file_doc)
+        print(f"File metadata saved to database")
+    except Exception as db_err:
+        print(f"Warning: Failed to save file metadata to database: {db_err}")
+
+    return UploadResponse(
+        job_id=job_id,
+        status=jobs[job_id]["status"],
+        message="Multi-modal files uploaded and processed",
     )
 
 
