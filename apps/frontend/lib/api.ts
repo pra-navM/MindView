@@ -82,6 +82,11 @@ export async function getMetadata(jobId: string): Promise<MeshMetadata> {
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || "Failed to get metadata");
+  }
+
+  return response.json();
+}
+
 export interface PatientResponse {
   patient_id: number;
   first_name: string | null;
