@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     use_gpu: bool = True  # Try GPU first, fallback to CPU
     segmentation_timeout: int = 600  # 10 minutes max
 
+    # Gemini API settings
+    gemini_api_key: str = ""
+
     class Config:
         env_file = ".env"
         case_sensitive = False

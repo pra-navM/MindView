@@ -497,3 +497,130 @@ export async function deleteNote(
     throw new Error(extractErrorMessage(error, "Failed to delete note"));
   }
 }
+
+// Feedback API types
+export interface FeedbackMessageResponse {
+  message_id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
+export interface FeedbackMetrics {
+  has_tumor: boolean;
+  scan_count?: number;
+  tumor_scan_count?: number;
+  latest_metrics?: {
+    total_lesion_volume_mm3?: number;
+    active_enhancing_volume_mm3?: number;
+    necrotic_core_volume_mm3?: number;
+    edema_volume_mm3?: number;
+    midline_shift_mm?: number;
+    infiltration_index?: number;
+  };
+  progression?: {
+    initial_volume_mm3: number;
+    current_volume_mm3: number;
+    absolute_change_mm3: number;
+    percent_change: number;
+    trend: "increasing" | "decreasing" | "stable";
+  };
+}
+
+export interface FeedbackSessionResponse {
+  session_id: string;
+  patient_id: number;
+  case_id: number;
+  summary: string | null;
+  metrics: FeedbackMetrics | null;
+  scan_count: number;
+  messages: FeedbackMessageResponse[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GenerateSummaryResponse {
+  session_id: string;
+  summary: string;
+  metrics: FeedbackMetrics;
+  message: string;
+}
+
+export interface ChatResponse {
+  user_message: FeedbackMessageResponse;
+  assistant_message: FeedbackMessageResponse;
+}
+
+export async function getFeedbackSession(
+  patientId: number,
+  caseId: number
+): Promise<FeedbackSessionResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/feedback/${patientId}/${caseId}`
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(extractErrorMessage(error, "Failed to get feedback session"));
+  }
+
+  return response.json();
+}
+
+export async function generateCaseSummary(
+  patientId: number,
+  caseId: number
+): Promise<GenerateSummaryResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/feedback/${patientId}/${caseId}/generate`,
+    {
+      method: "POST",
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(extractErrorMessage(error, "Failed to generate summary"));
+  }
+
+  return response.json();
+}
+
+export async function sendFeedbackMessage(
+  patientId: number,
+  caseId: number,
+  content: string
+): Promise<ChatResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/feedback/${patientId}/${caseId}/chat`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(extractErrorMessage(error, "Failed to send message"));
+  }
+
+  return response.json();
+}
+
+export async function clearFeedbackSession(
+  patientId: number,
+  caseId: number
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/feedback/${patientId}/${caseId}`,
+    {
+      method: "DELETE",
+    }
+  );
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(extractErrorMessage(error, "Failed to clear feedback session"));
+  }
+}

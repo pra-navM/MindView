@@ -19,6 +19,8 @@ class Database:
     scan_files = None
     timeline_jobs = None
     notes = None
+    feedback_sessions = None
+    feedback_messages = None
 
 
 async def connect_to_mongo():
@@ -38,6 +40,8 @@ async def connect_to_mongo():
         Database.scan_files = Database.db["scan_files"]
         Database.timeline_jobs = Database.db["timeline_jobs"]
         Database.notes = Database.db["notes"]
+        Database.feedback_sessions = Database.db["feedback_sessions"]
+        Database.feedback_messages = Database.db["feedback_messages"]
 
         # Initialize GridFS bucket
         Database.gridfs_bucket = AsyncIOMotorGridFSBucket(
@@ -105,6 +109,21 @@ async def create_indexes():
         ("case_id", ASCENDING),
         ("file_id", ASCENDING),
         ("created_at", DESCENDING)
+    ])
+
+    # Feedback session indexes
+    await Database.feedback_sessions.create_index([("session_id", ASCENDING)], unique=True)
+    await Database.feedback_sessions.create_index([
+        ("patient_id", ASCENDING),
+        ("case_id", ASCENDING)
+    ], unique=True)
+
+    # Feedback message indexes
+    await Database.feedback_messages.create_index([("message_id", ASCENDING)], unique=True)
+    await Database.feedback_messages.create_index([("session_id", ASCENDING)])
+    await Database.feedback_messages.create_index([
+        ("session_id", ASCENDING),
+        ("created_at", ASCENDING)
     ])
 
     print("✓ Indexes created successfully")
