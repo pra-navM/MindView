@@ -10,6 +10,7 @@ import MultiModalUpload from "@/components/MultiModalUpload";
 import ProcessingStatus from "@/components/ProcessingStatus";
 import RegionControls from "@/components/RegionControls";
 import { uploadFile, uploadMultiModalFiles, getMeshUrl, getMetadata, MeshMetadata, RegionInfo, MultiModalFiles } from "@/lib/api";
+import NotesPanel from "@/components/NotesPanel";
 
 const BrainViewer = dynamic(() => import("@/components/BrainViewer"), {
   ssr: false,
@@ -375,9 +376,9 @@ export default function Home() {
             </div>
 
             <div className="flex gap-4">
-              {/* Region Controls - Left Panel */}
-              {metadata && metadata.regions.length > 0 && (
-                <div className="w-72 flex-shrink-0">
+              {/* Left Panel - Region Controls & Notes */}
+              <div className="w-72 flex-shrink-0 space-y-4">
+                {metadata && metadata.regions.length > 0 && (
                   <RegionControls
                     regions={metadata.regions}
                     regionStates={regionStates}
@@ -386,8 +387,15 @@ export default function Home() {
                     onHideAll={handleHideAll}
                     hasTumor={metadata.has_tumor}
                   />
-                </div>
-              )}
+                )}
+                {jobId && patientId !== null && caseId !== null && (
+                  <NotesPanel
+                    patientId={patientId}
+                    caseId={caseId}
+                    fileId={jobId}
+                  />
+                )}
+              </div>
 
               {/* Brain Viewer - Main Area */}
               <div className="flex-1">
