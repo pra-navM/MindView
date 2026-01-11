@@ -10,7 +10,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, binary_dilation
 from skimage.measure import marching_cubes
 import trimesh
 
@@ -20,12 +20,15 @@ from services.synthseg_service import (
     get_label_info,
     detect_segmentation_type,
     remap_brats_labels,
+    merge_segmentations,
     SYNTHSEG_LABELS,
     TUMOR_LABELS,
 )
 from services.mesh_generation import segmentation_to_meshes, intensity_to_meshes
 from services.segmentation_service import run_auto_segmentation
 from services.model_manager import SegmentationError
+from services.tumor_inference import TumorInference, run_tumor_detection
+from services.synthseg_inference import run_synthseg
 
 app = FastAPI(title="MindView API", version="1.0.0")
 
@@ -460,6 +463,286 @@ async def upload_file(
         job_id=job_id,
         status=jobs[job_id]["status"],
         message="File uploaded and processed",
+    )
+
+
+def process_multimodal_to_mesh(
+    job_id: str,
+    modality_paths: dict,
+    output_path: Path,
+    metadata_path: Path
+) -> None:
+    """
+    Process multi-modal MRI (T1, T1ce, T2, FLAIR) to combined mesh.
+
+    Pipeline (tumor-first approach):
+    1. Run MONAI tumor detection on all 4 modalities FIRST
+    2. Mask out tumor regions from T1 (fill with median brain intensity)
+    3. Run ANTsPyNet on masked T1 for anatomical segmentation
+    4. Combine tumor + anatomical segmentations
+    5. Generate 3D mesh from combined segmentation
+    """
+    try:
+        jobs[job_id]["status"] = "processing"
+        jobs[job_id]["status_message"] = "Starting multi-modal processing..."
+        jobs[job_id]["progress"] = 5
+
+        def update_progress(p):
+            jobs[job_id]["progress"] = p
+
+        t1_path = modality_paths["t1"]
+        t1ce_path = modality_paths["t1ce"]
+        t2_path = modality_paths["t2"]
+        flair_path = modality_paths["flair"]
+
+        # Step 1: Run MONAI tumor detection FIRST
+        print(f"[{job_id}] Step 1: Running tumor detection on multi-modal input...")
+        jobs[job_id]["status_message"] = "Detecting tumors (multi-modal)..."
+
+        tumor_output = SEGMENTATION_DIR / f"{job_id}_tumor.nii.gz"
+
+        tumor_seg = run_tumor_detection(
+            modality_paths,
+            tumor_output,
+            t1ce_path,  # T1ce as reference for affine/shape
+            progress_callback=lambda p: update_progress(5 + int(p * 0.3))  # 5-35%
+        )
+
+        has_tumor = tumor_seg is not None and np.any(tumor_seg > 0)
+        print(f"[{job_id}] Tumor detection complete. Tumor found: {has_tumor}")
+        jobs[job_id]["progress"] = 35
+
+        # Step 2: Mask out tumor from T1 if tumor was found
+        print(f"[{job_id}] Step 2: Preparing brain for anatomical segmentation...")
+        jobs[job_id]["status_message"] = "Masking tumor regions..."
+
+        if has_tumor:
+            print(f"[{job_id}] Masking out tumor regions from T1...")
+
+            # Load T1
+            t1_img = nib.load(str(t1_path))
+            t1_data = t1_img.get_fdata()
+
+            # Create tumor mask (any tumor label > 0)
+            tumor_mask = tumor_seg > 0
+
+            # Dilate tumor mask slightly to ensure clean boundaries
+            tumor_mask_dilated = binary_dilation(tumor_mask, iterations=2)
+
+            # Fill tumor region with median brain intensity
+            brain_mask = t1_data > np.percentile(t1_data[t1_data > 0], 10)
+            non_tumor_brain = t1_data[brain_mask & ~tumor_mask_dilated]
+            fill_value = np.median(non_tumor_brain) if len(non_tumor_brain) > 0 else 0
+
+            t1_masked = t1_data.copy()
+            t1_masked[tumor_mask_dilated] = fill_value
+
+            # Save masked T1 for processing
+            masked_t1_path = SEGMENTATION_DIR / f"{job_id}_t1_masked.nii.gz"
+            masked_img = nib.Nifti1Image(t1_masked.astype(np.float32), t1_img.affine)
+            nib.save(masked_img, str(masked_t1_path))
+
+            input_for_synthseg = masked_t1_path
+            print(f"[{job_id}] Masked T1 saved to: {masked_t1_path}")
+        else:
+            input_for_synthseg = t1_path
+            print(f"[{job_id}] No tumor to mask, using original T1")
+
+        jobs[job_id]["progress"] = 40
+
+        # Step 3: Run ANTsPyNet anatomical segmentation on masked T1
+        print(f"[{job_id}] Step 3: Running anatomical segmentation on clean brain...")
+        jobs[job_id]["status_message"] = "Running brain segmentation (T1+T2 multi-modal)..."
+
+        synthseg_output = SEGMENTATION_DIR / f"{job_id}_anatomical.nii.gz"
+
+        anatomical_seg = run_synthseg(
+            input_for_synthseg,  # Use masked T1 if tumor was found
+            synthseg_output,
+            flair_path=flair_path,  # FLAIR for brain extraction
+            t2_path=t2_path,        # T2 for multi-modal segmentation
+            progress_callback=lambda p: update_progress(40 + int(p * 0.35))  # 40-75%
+        )
+
+        print(f"[{job_id}] Anatomical segmentation complete")
+        jobs[job_id]["progress"] = 75
+
+        # Step 4: Combine segmentations (tumor overlays anatomical)
+        print(f"[{job_id}] Step 4: Combining segmentations...")
+        jobs[job_id]["status_message"] = "Merging anatomical and tumor data..."
+
+        merged_output = SEGMENTATION_DIR / f"{job_id}_merged.nii.gz"
+
+        if has_tumor:
+            # Combine: anatomical as base, tumor overlaid
+            combined = anatomical_seg.copy()
+            tumor_mask = tumor_seg > 0
+            combined[tumor_mask] = tumor_seg[tumor_mask]
+
+            # Save combined segmentation
+            ref_img = nib.load(str(t1_path))
+            combined_img = nib.Nifti1Image(combined.astype(np.int16), ref_img.affine)
+            nib.save(combined_img, str(merged_output))
+
+            final_seg_path = merged_output
+            unique_labels = np.unique(combined[combined > 0])
+            print(f"[{job_id}] Combined segmentation with {len(unique_labels)} labels")
+        else:
+            final_seg_path = synthseg_output
+            print(f"[{job_id}] No tumor found, using anatomical segmentation only")
+
+        jobs[job_id]["progress"] = 80
+
+        # Step 5: Generate mesh from combined segmentation
+        print(f"[{job_id}] Step 5: Generating 3D mesh...")
+        jobs[job_id]["status_message"] = "Generating 3D visualization..."
+
+        segmentation_to_meshes(
+            final_seg_path,
+            output_path,
+            metadata_path,
+            job_id,
+            progress_callback=lambda p: update_progress(80 + int(p * 0.2))  # 80-100%
+        )
+
+        # Update metadata with tumor flag
+        if metadata_path.exists():
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+            metadata["has_tumor"] = bool(has_tumor)
+            metadata["segmentation_method"] = "tumor_first_multimodal"
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f)
+
+        jobs[job_id]["status"] = "completed"
+        jobs[job_id]["progress"] = 100
+        jobs[job_id]["mesh_path"] = str(output_path)
+        jobs[job_id]["metadata_path"] = str(metadata_path)
+        jobs[job_id]["status_message"] = "Processing complete!"
+        print(f"[{job_id}] Multi-modal processing complete!")
+
+    except Exception as e:
+        print(f"[{job_id}] ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        jobs[job_id]["status"] = "failed"
+        jobs[job_id]["error"] = str(e)
+
+
+@app.post("/api/upload-multimodal", response_model=UploadResponse)
+async def upload_multimodal_files(
+    patient_id: int,
+    case_id: int,
+    t1: UploadFile = File(...),
+    t1ce: UploadFile = File(...),
+    t2: UploadFile = File(...),
+    flair: UploadFile = File(...),
+    scan_date: Optional[str] = None
+):
+    """
+    Upload 4 MRI modalities (T1, T1ce, T2, FLAIR) for combined segmentation.
+
+    This endpoint runs both anatomical (ANTsPyNet) and tumor (MONAI SegResNet)
+    segmentation, then merges the results into a single 3D visualization.
+    """
+    print(f"=== Multi-modal upload request received ===")
+    print(f"Patient ID: {patient_id}, Case ID: {case_id}")
+    print(f"Files: T1={t1.filename}, T1ce={t1ce.filename}, T2={t2.filename}, FLAIR={flair.filename}")
+
+    # Validate all files are NIfTI
+    for name, file in [("t1", t1), ("t1ce", t1ce), ("t2", t2), ("flair", flair)]:
+        if not file.filename:
+            raise HTTPException(status_code=400, detail=f"No file provided for {name}")
+        if not (file.filename.endswith(".nii") or file.filename.endswith(".nii.gz")):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file format for {name}. Please upload a .nii or .nii.gz file"
+            )
+
+    job_id = str(uuid.uuid4())
+    print(f"Job ID: {job_id}")
+
+    # Save all 4 files
+    modality_paths = {}
+    total_size = 0
+
+    for name, file in [("t1", t1), ("t1ce", t1ce), ("t2", t2), ("flair", flair)]:
+        ext = ".nii.gz" if file.filename.endswith(".nii.gz") else ".nii"
+        file_path = UPLOAD_DIR / f"{job_id}_{name}{ext}"
+
+        content = await file.read()
+        total_size += len(content)
+
+        with open(file_path, "wb") as f:
+            f.write(content)
+
+        modality_paths[name] = file_path
+        print(f"Saved {name}: {file_path} ({len(content)} bytes)")
+
+    output_path = MESH_DIR / f"{job_id}.glb"
+    metadata_path = METADATA_DIR / f"{job_id}.json"
+
+    # Initialize job
+    jobs[job_id] = {
+        "status": "queued",
+        "progress": 0,
+        "status_message": "Preparing multi-modal processing...",
+        "input_paths": {k: str(v) for k, v in modality_paths.items()},
+        "mesh_path": None,
+        "metadata_path": None,
+        "error": None,
+    }
+
+    # Process synchronously (can be made async with background tasks if needed)
+    print(f"Starting multi-modal processing...")
+    process_multimodal_to_mesh(job_id, modality_paths, output_path, metadata_path)
+
+    print(f"Processing complete. Status: {jobs[job_id]['status']}")
+
+    # Parse scan_date if provided
+    scan_timestamp = datetime.utcnow()
+    if scan_date:
+        try:
+            scan_timestamp = datetime.fromisoformat(scan_date.replace('Z', '+00:00'))
+        except Exception as e:
+            print(f"Warning: Failed to parse scan_date '{scan_date}': {e}")
+
+    # Save file metadata to database
+    file_doc = {
+        "file_id": job_id,
+        "job_id": job_id,
+        "case_id": case_id,
+        "patient_id": patient_id,
+        "original_file": {
+            "filename": f"multimodal_{t1.filename}",
+            "content_type": "application/octet-stream",
+            "size_bytes": total_size,
+            "file_type": "multimodal_nifti",
+            "modalities": {
+                "t1": t1.filename,
+                "t1ce": t1ce.filename,
+                "t2": t2.filename,
+                "flair": flair.filename
+            }
+        },
+        "status": jobs[job_id]["status"],
+        "progress": jobs[job_id]["progress"],
+        "error": jobs[job_id].get("error"),
+        "uploaded_at": datetime.utcnow(),
+        "scan_timestamp": scan_timestamp,
+        "metadata": {"multimodal": True}
+    }
+
+    try:
+        await Database.scan_files.insert_one(file_doc)
+        print(f"File metadata saved to database")
+    except Exception as db_err:
+        print(f"Warning: Failed to save file metadata to database: {db_err}")
+
+    return UploadResponse(
+        job_id=job_id,
+        status=jobs[job_id]["status"],
+        message="Multi-modal files uploaded and processed",
     )
 
 

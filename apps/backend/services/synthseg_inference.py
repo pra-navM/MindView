@@ -11,6 +11,8 @@ from services.model_manager import InferenceError
 def run_synthseg(
     input_path: Path,
     output_path: Path,
+    flair_path: Optional[Path] = None,
+    t2_path: Optional[Path] = None,
     progress_callback: Optional[Callable[[int], None]] = None
 ) -> np.ndarray:
     """
@@ -19,9 +21,17 @@ def run_synthseg(
     This provides tissue segmentation (CSF, gray matter, white matter, etc.)
     similar to SynthSeg but compatible with modern Python versions.
 
+    If flair_path is provided, uses FLAIR for brain extraction (cleaner mask).
+    If t2_path is provided, uses T1+T2 multi-modal mode for better subcortical
+    structure segmentation (deep gray matter, brainstem, cerebellum).
+
+    Note: No preprocessing is done - deep_atropos handles N4 bias correction internally.
+
     Args:
-        input_path: Path to input NIfTI file
+        input_path: Path to T1 NIfTI file (NOT T1ce - model trained on regular T1)
         output_path: Path to save segmentation NIfTI
+        flair_path: Optional FLAIR image for better brain extraction
+        t2_path: Optional T2 image for multi-modal segmentation
         progress_callback: Optional callback for progress updates
 
     Returns:
@@ -29,7 +39,7 @@ def run_synthseg(
     """
     try:
         if progress_callback:
-            progress_callback(15)
+            progress_callback(5)
 
         print("Loading ANTsPyNet for brain segmentation...")
 
@@ -37,41 +47,83 @@ def run_synthseg(
         import antspynet
 
         if progress_callback:
-            progress_callback(20)
+            progress_callback(10)
 
-        # Load the image with ANTs
-        print(f"Loading image: {input_path}")
-        img = ants.image_read(str(input_path))
+        # Load the T1 image
+        print(f"Loading T1 image: {input_path}")
+        t1_img = ants.image_read(str(input_path))
 
         if progress_callback:
-            progress_callback(25)
+            progress_callback(20)
 
-        # Run brain extraction first
-        print("Running brain extraction...")
-        brain_extraction = antspynet.brain_extraction(
-            img,
-            modality="t1",
-            verbose=True
-        )
-        brain_mask = brain_extraction["brain_mask"]
+        # Run brain extraction
+        # Use FLAIR if available (better brain-skull boundary detection)
+        if flair_path and flair_path.exists():
+            print("Using FLAIR for brain extraction...")
+            flair_img = ants.image_read(str(flair_path))
+
+            brain_extraction = antspynet.brain_extraction(
+                flair_img,
+                modality="flair",
+                verbose=True
+            )
+            brain_mask = brain_extraction["brain_mask"]
+
+            # Resample mask to T1 space if needed
+            if not ants.image_physical_space_consistency(brain_mask, t1_img):
+                print("Resampling FLAIR brain mask to T1 space...")
+                brain_mask = ants.resample_image_to_target(
+                    brain_mask, t1_img, interp_type="nearestNeighbor"
+                )
+        else:
+            print("Using T1-based brain extraction...")
+            brain_extraction = antspynet.brain_extraction(
+                t1_img,
+                modality="t1",
+                verbose=True
+            )
+            brain_mask = brain_extraction["brain_mask"]
 
         if progress_callback:
             progress_callback(40)
 
-        # Apply mask to get brain-only image
-        brain_img = img * brain_mask
+        # Apply mask to get brain-only T1 image
+        t1_brain = t1_img * brain_mask
 
         if progress_callback:
             progress_callback(45)
 
         # Run deep_atropos for tissue segmentation
         # This segments into: CSF, gray matter, white matter, deep gray matter, brainstem, cerebellum
-        print("Running tissue segmentation (deep_atropos)...")
-        atropos_result = antspynet.deep_atropos(
-            brain_img,
-            do_preprocessing=True,
-            verbose=True
-        )
+        if t2_path and t2_path.exists():
+            # Multi-modal mode: T1 + T2 (much better for subcortical structures)
+            print("Running multi-modal deep_atropos (T1 + T2)...")
+            t2_img = ants.image_read(str(t2_path))
+
+            # Resample T2 to T1 space if needed
+            if not ants.image_physical_space_consistency(t2_img, t1_img):
+                print("Resampling T2 to T1 space...")
+                t2_img = ants.resample_image_to_target(
+                    t2_img, t1_img, interp_type="linear"
+                )
+
+            # Apply brain mask to T2
+            t2_brain = t2_img * brain_mask
+
+            # deep_atropos multi-modal: expects [T1, T2, FA] - pass None for FA
+            atropos_result = antspynet.deep_atropos(
+                [t1_brain, t2_brain, None],
+                do_preprocessing=True,
+                verbose=True
+            )
+        else:
+            # Single-modal mode: T1 only
+            print("Running single-modal deep_atropos (T1 only)...")
+            atropos_result = antspynet.deep_atropos(
+                t1_brain,
+                do_preprocessing=True,
+                verbose=True
+            )
 
         if progress_callback:
             progress_callback(75)
