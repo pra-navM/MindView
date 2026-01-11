@@ -14,7 +14,7 @@ import trimesh
 
 from datetime import datetime
 from database import connect_to_mongo, close_mongo_connection, Database
-from routes import patients, cases, files
+from routes import patients, cases, files, timeline
 
 app = FastAPI(title="MindView API", version="1.0.0")
 
@@ -44,6 +44,7 @@ async def shutdown_db():
 app.include_router(patients.router, prefix="/api/patients", tags=["Patients"])
 app.include_router(cases.router, prefix="/api/cases", tags=["Medical Cases"])
 app.include_router(files.router, prefix="/api/files", tags=["Scan Files"])
+app.include_router(timeline.router, prefix="/api/timeline", tags=["Timeline"])
 
 BASE_DIR = Path(__file__).parent
 UPLOAD_DIR = BASE_DIR / "storage" / "uploads"
