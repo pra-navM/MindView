@@ -26,8 +26,8 @@ class PyObjectId(ObjectId):
 class MedicalCaseCreate(BaseModel):
     """Schema for creating a new medical case."""
 
-    case_id: str = Field(..., description="Unique case identifier")
-    patient_id: str = Field(..., description="Patient this case belongs to")
+    patient_id: int = Field(..., description="Patient this case belongs to")
+    case_name: str = Field(..., description="Name/title of the case")
     diagnosis: Optional[str] = None
     doctor_notes: Optional[str] = None
     created_by: Optional[str] = None
@@ -38,6 +38,7 @@ class MedicalCaseCreate(BaseModel):
 class MedicalCaseUpdate(BaseModel):
     """Schema for updating a medical case."""
 
+    case_name: Optional[str] = None
     diagnosis: Optional[str] = None
     doctor_notes: Optional[str] = None
     status: Optional[Literal["active", "closed", "archived"]] = None
@@ -48,8 +49,9 @@ class MedicalCaseInDB(BaseModel):
     """Schema for medical case document in database."""
 
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    case_id: str
-    patient_id: str
+    case_id: int
+    patient_id: int
+    case_name: str
     diagnosis: Optional[str] = None
     doctor_notes: Optional[str] = None
     created_by: Optional[str] = None
@@ -67,8 +69,9 @@ class MedicalCaseInDB(BaseModel):
 class MedicalCaseResponse(BaseModel):
     """Schema for medical case API response."""
 
-    case_id: str
-    patient_id: str
+    case_id: int
+    patient_id: int
+    case_name: str
     diagnosis: Optional[str] = None
     doctor_notes: Optional[str] = None
     created_by: Optional[str] = None
@@ -76,3 +79,9 @@ class MedicalCaseResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     metadata: dict = {}
+
+
+class MedicalCaseWithStats(MedicalCaseResponse):
+    """Schema for medical case API response with additional statistics."""
+
+    file_count: int = 0

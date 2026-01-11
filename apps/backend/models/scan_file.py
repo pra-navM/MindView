@@ -46,8 +46,8 @@ class ProcessedMeshInfo(BaseModel):
 class ScanFileCreate(BaseModel):
     """Schema for creating a new scan file record."""
 
-    patient_id: str
-    case_id: str
+    patient_id: int
+    case_id: int
     scan_timestamp: Optional[datetime] = None
     doctor_notes: Optional[str] = None
     metadata: Optional[dict] = {}
@@ -59,8 +59,8 @@ class ScanFileInDB(BaseModel):
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
     file_id: str
     job_id: str
-    case_id: str
-    patient_id: str
+    case_id: int
+    patient_id: int
     original_file: OriginalFileInfo
     processed_mesh: Optional[ProcessedMeshInfo] = None
     status: Literal["queued", "processing", "completed", "failed"] = "queued"
@@ -84,8 +84,9 @@ class ScanFileResponse(BaseModel):
 
     job_id: str
     file_id: str
-    case_id: str
-    patient_id: str
+    case_id: int
+    patient_id: int
+    original_filename: str
     status: str
     progress: int
     mesh_url: Optional[str] = None

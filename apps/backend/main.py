@@ -53,6 +53,7 @@ async def shutdown_db():
 # Include routers
 app.include_router(patients.router, prefix="/api/patients", tags=["Patients"])
 app.include_router(cases.router, prefix="/api/cases", tags=["Medical Cases"])
+app.include_router(files.router, prefix="/api/files", tags=["Scan Files"])
 
 BASE_DIR = Path(__file__).parent
 UPLOAD_DIR = BASE_DIR / "storage" / "uploads"
@@ -355,9 +356,16 @@ def process_obj_to_glb(job_id: str, input_path: Path, output_path: Path) -> None
 
 
 @app.post("/api/upload", response_model=UploadResponse)
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    patient_id: int,
+    case_id: int,
+    file: UploadFile = File(...),
+    scan_date: Optional[str] = None
+):
     """Upload a NIfTI or OBJ file and start processing."""
     print(f"=== Upload request received ===")
+    print(f"Patient ID: {patient_id}, Case ID: {case_id}")
+    print(f"Scan Date: {scan_date}")
     print(f"Filename: {file.filename}")
 
     if not file.filename:
@@ -411,6 +419,42 @@ async def upload_file(file: UploadFile = File(...)):
     print(f"Processing complete. Status: {jobs[job_id]['status']}")
     print(f"Error: {jobs[job_id].get('error')}")
 
+    # Parse scan_date if provided
+    scan_timestamp = datetime.utcnow()
+    if scan_date:
+        try:
+            # Parse ISO format date string
+            scan_timestamp = datetime.fromisoformat(scan_date.replace('Z', '+00:00'))
+        except Exception as e:
+            print(f"Warning: Failed to parse scan_date '{scan_date}': {e}")
+            # Fall back to current time if parsing fails
+
+    # Save file metadata to database
+    file_doc = {
+        "file_id": job_id,
+        "job_id": job_id,
+        "case_id": case_id,
+        "patient_id": patient_id,
+        "original_file": {
+            "filename": file.filename,
+            "content_type": file.content_type or "application/octet-stream",
+            "size_bytes": len(content),
+            "file_type": "nifti" if is_nifti else "obj"
+        },
+        "status": jobs[job_id]["status"],
+        "progress": jobs[job_id]["progress"],
+        "error": jobs[job_id].get("error"),
+        "uploaded_at": datetime.utcnow(),
+        "scan_timestamp": scan_timestamp,
+        "metadata": {}
+    }
+
+    try:
+        await Database.scan_files.insert_one(file_doc)
+        print(f"File metadata saved to database")
+    except Exception as db_err:
+        print(f"Warning: Failed to save file metadata to database: {db_err}")
+
     return UploadResponse(
         job_id=job_id,
         status=jobs[job_id]["status"],
@@ -440,15 +484,21 @@ async def get_status(job_id: str):
 @app.get("/api/mesh/{job_id}")
 async def get_mesh(job_id: str):
     """Download the generated mesh file."""
-    if job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
+    mesh_path = None
 
-    job = jobs[job_id]
+    # First check in-memory jobs dict
+    if job_id in jobs:
+        job = jobs[job_id]
+        if job["status"] != "completed":
+            raise HTTPException(status_code=400, detail="Mesh not ready yet")
+        mesh_path = job.get("mesh_path")
+    else:
+        # Check database for existing file
+        file_doc = await Database.scan_files.find_one({"job_id": job_id})
+        if file_doc and file_doc.get("status") == "completed":
+            # Construct mesh path from job_id
+            mesh_path = str(MESH_DIR / f"{job_id}.glb")
 
-    if job["status"] != "completed":
-        raise HTTPException(status_code=400, detail="Mesh not ready yet")
-
-    mesh_path = job.get("mesh_path")
     if not mesh_path or not Path(mesh_path).exists():
         raise HTTPException(status_code=404, detail="Mesh file not found")
 

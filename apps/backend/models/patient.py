@@ -26,7 +26,6 @@ class PyObjectId(ObjectId):
 class PatientCreate(BaseModel):
     """Schema for creating a new patient."""
 
-    patient_id: str = Field(..., description="Unique patient identifier")
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     date_of_birth: Optional[datetime] = None
@@ -50,7 +49,7 @@ class PatientInDB(BaseModel):
     """Schema for patient document in database."""
 
     id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
-    patient_id: str
+    patient_id: int
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     date_of_birth: Optional[datetime] = None
@@ -69,7 +68,7 @@ class PatientInDB(BaseModel):
 class PatientResponse(BaseModel):
     """Schema for patient API response."""
 
-    patient_id: str
+    patient_id: int
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     date_of_birth: Optional[datetime] = None
@@ -78,3 +77,19 @@ class PatientResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     metadata: dict = {}
+
+
+class PatientWithStats(BaseModel):
+    """Schema for patient with statistics."""
+
+    patient_id: int
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    date_of_birth: Optional[datetime] = None
+    gender: Optional[str] = None
+    medical_record_number: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    metadata: dict = {}
+    case_count: int = 0
+    file_count: int = 0

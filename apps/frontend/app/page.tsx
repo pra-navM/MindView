@@ -2,6 +2,9 @@
 
 import { useState, useCallback, useEffect } from "react";
 import dynamic from "next/dynamic";
+import PatientSelection from "@/components/PatientSelection";
+import CaseList from "@/components/CaseList";
+import FileList from "@/components/FileList";
 import FileUpload from "@/components/FileUpload";
 import ProcessingStatus from "@/components/ProcessingStatus";
 import RegionControls from "@/components/RegionControls";
@@ -16,7 +19,15 @@ const BrainViewer = dynamic(() => import("@/components/BrainViewer"), {
   ),
 });
 
-type AppState = "idle" | "uploading" | "processing" | "viewing" | "error";
+type AppState =
+  | "patient-selection"
+  | "case-selection"
+  | "file-list"
+  | "file-upload"
+  | "uploading"
+  | "processing"
+  | "viewing"
+  | "error";
 
 interface RegionState {
   visible: boolean;
@@ -24,7 +35,10 @@ interface RegionState {
 }
 
 export default function Home() {
-  const [state, setState] = useState<AppState>("idle");
+  const [state, setState] = useState<AppState>("patient-selection");
+  const [patientId, setPatientId] = useState<number | null>(null);
+  const [caseId, setCaseId] = useState<number | null>(null);
+  const [caseName, setCaseName] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [meshUrl, setMeshUrl] = useState<string | null>(null);
@@ -55,7 +69,34 @@ export default function Home() {
     }
   }, [jobId, state]);
 
-  const handleFileSelect = useCallback(async (file: File) => {
+  const handlePatientSelected = useCallback((id: number) => {
+    setPatientId(id);
+    setState("case-selection");
+  }, []);
+
+  const handleCaseSelected = useCallback((id: number, name: string) => {
+    setCaseId(id);
+    setCaseName(name);
+    setState("file-list");
+  }, []);
+
+  const handleFileSelectedFromList = useCallback((jobId: string, filename: string) => {
+    setFileName(filename);
+    setMeshUrl(getMeshUrl(jobId));
+    setState("viewing");
+  }, []);
+
+  const handleUploadFileClick = useCallback(() => {
+    setState("file-upload");
+  }, []);
+
+  const handleFileSelect = useCallback(async (file: File, scanDate?: string) => {
+    if (patientId === null || caseId === null) {
+      setError("Patient ID and Case ID are required");
+      setState("error");
+      return;
+    }
+
     setFileName(file.name);
     setState("uploading");
     setProgress(0);
@@ -65,7 +106,8 @@ export default function Home() {
 
     try {
       setProgress(10);
-      const response = await uploadFile(file);
+
+      const response = await uploadFile(file, patientId, caseId, scanDate);
       setJobId(response.job_id);
 
       if (response.status === "completed") {
@@ -83,10 +125,21 @@ export default function Home() {
       setError(err instanceof Error ? err.message : "An error occurred");
       setState("error");
     }
-  }, []);
+  }, [patientId, caseId]);
 
   const handleReset = useCallback(() => {
-    setState("idle");
+    setState("file-list");
+    setProgress(0);
+    setError(null);
+    setMeshUrl(null);
+    setFileName(null);
+  }, []);
+
+  const handleChangePatient = useCallback(() => {
+    setState("patient-selection");
+    setPatientId(null);
+    setCaseId(null);
+    setCaseName(null);
     setProgress(0);
     setError(null);
     setMeshUrl(null);
@@ -147,8 +200,61 @@ export default function Home() {
           </p>
         </header>
 
-        {state === "idle" && (
+        {state === "patient-selection" && (
+          <PatientSelection onPatientSelected={handlePatientSelected} />
+        )}
+
+        {state === "case-selection" && patientId !== null && (
+          <CaseList
+            patientId={patientId}
+            onCaseSelected={handleCaseSelected}
+            onChangePatient={handleChangePatient}
+          />
+        )}
+
+        {state === "file-list" && patientId !== null && caseId !== null && caseName !== null && (
+          <FileList
+            patientId={patientId}
+            caseId={caseId}
+            caseName={caseName}
+            onFileSelected={handleFileSelectedFromList}
+            onUploadFile={handleUploadFileClick}
+            onChangeCase={() => setState("case-selection")}
+          />
+        )}
+
+        {state === "file-upload" && (
           <div className="max-w-2xl mx-auto">
+            <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="text-sm text-blue-800">
+                <p>
+                  <span className="font-semibold">Patient ID:</span> {patientId}
+                </p>
+                <p className="mt-1">
+                  <span className="font-semibold">Case:</span> {caseName} (ID: {caseId})
+                </p>
+              </div>
+              <div className="flex gap-4 mt-2">
+                <button
+                  onClick={() => setState("file-list")}
+                  className="text-sm text-blue-600 hover:text-blue-800 underline"
+                >
+                  Back to Files
+                </button>
+                <button
+                  onClick={() => setState("case-selection")}
+                  className="text-sm text-blue-600 hover:text-blue-800 underline"
+                >
+                  Change Case
+                </button>
+                <button
+                  onClick={handleChangePatient}
+                  className="text-sm text-blue-600 hover:text-blue-800 underline"
+                >
+                  Change Patient
+                </button>
+              </div>
+            </div>
             <FileUpload onFileSelect={handleFileSelect} />
           </div>
         )}
@@ -169,7 +275,37 @@ export default function Home() {
         )}
 
         {state === "viewing" && meshUrl && (
-          <div className="flex gap-4">
+
+          <div className="w-full">
+            <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3 max-w-2xl mx-auto">
+              <div className="text-sm text-blue-800">
+                <p>
+                  <span className="font-semibold">Patient ID:</span> {patientId} |
+                  <span className="font-semibold ml-2">Case:</span> {caseName} (ID: {caseId})
+                </p>
+                <div className="flex gap-4 mt-2">
+                  <button
+                    onClick={() => setState("file-list")}
+                    className="text-sm text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Back to Files
+                  </button>
+                  <button
+                    onClick={() => setState("case-selection")}
+                    className="text-sm text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Change Case
+                  </button>
+                  <button
+                    onClick={handleChangePatient}
+                    className="text-sm text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Change Patient
+                  </button>
+                </div>
+              </div>
+            </div>
+            
             {/* Region Controls - Left Panel */}
             {metadata && metadata.regions.length > 0 && (
               <div className="w-72 flex-shrink-0">
@@ -183,7 +319,7 @@ export default function Home() {
                 />
               </div>
             )}
-
+            
             {/* Brain Viewer - Main Area */}
             <div className="flex-1">
               <BrainViewer
