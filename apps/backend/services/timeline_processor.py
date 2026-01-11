@@ -276,10 +276,23 @@ async def process_timeline_generation(
 
     # Step 4: Calculate global threshold for consistent topology
     # Use the same threshold across all frames
+    print(f"[Timeline] Calculating threshold from {len(all_frame_voxels)} frames...")
+    print(f"[Timeline] Frame 0 stats - shape: {all_frame_voxels[0].shape}, min: {all_frame_voxels[0].min():.2f}, max: {all_frame_voxels[0].max():.2f}")
+
     all_non_zero = np.concatenate([v[v > 0].flatten() for v in all_frame_voxels[:3]])  # Sample from first few
+    print(f"[Timeline] Non-zero values count: {len(all_non_zero)}")
     if len(all_non_zero) == 0:
         raise ValueError("No non-zero values in voxel data")
-    global_threshold = np.percentile(all_non_zero, 50)
+
+    # Check if data is binary (all non-zero values are the same)
+    unique_non_zero = np.unique(all_non_zero)
+    if len(unique_non_zero) == 1:
+        # Binary/segmentation mask - use midpoint between 0 and the value
+        global_threshold = unique_non_zero[0] / 2.0
+        print(f"[Timeline] Detected binary data, using threshold: {global_threshold}")
+    else:
+        global_threshold = np.percentile(all_non_zero, 50)
+        print(f"[Timeline] Global threshold (50th percentile): {global_threshold}")
 
     # Generate meshes for all frames
     meshes = []

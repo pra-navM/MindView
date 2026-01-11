@@ -141,6 +141,36 @@ async def get_timeline_status(job_id: str):
     )
 
 
+@router.get("/mesh/{job_id}")
+async def get_timeline_mesh(job_id: str):
+    """Download the generated timeline base mesh GLB."""
+    mesh_path = TIMELINE_MESH_DIR / f"{job_id}.glb"
+
+    if not mesh_path.exists():
+        raise HTTPException(status_code=404, detail="Timeline mesh not found")
+
+    return FileResponse(
+        str(mesh_path),
+        media_type="model/gltf-binary",
+        filename=f"timeline_{job_id}.glb"
+    )
+
+
+@router.get("/mesh/{job_id}/morphs")
+async def get_timeline_morph_data(job_id: str):
+    """Download the morph target delta data as JSON."""
+    json_path = TIMELINE_MESH_DIR / f"{job_id}.morphs.json"
+
+    if not json_path.exists():
+        raise HTTPException(status_code=404, detail="Timeline morph data not found")
+
+    return FileResponse(
+        str(json_path),
+        media_type="application/json",
+        filename=f"timeline_{job_id}.morphs.json"
+    )
+
+
 @router.get("/{patient_id}/{case_id}", response_model=TimelineMetadata)
 async def get_timeline_info(patient_id: int, case_id: int):
     """Get timeline metadata for a case - list of scans in chronological order."""
@@ -285,33 +315,3 @@ async def generate_timeline(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start timeline generation: {str(e)}")
-
-
-@router.get("/mesh/{job_id}")
-async def get_timeline_mesh(job_id: str):
-    """Download the generated timeline base mesh GLB."""
-    mesh_path = TIMELINE_MESH_DIR / f"{job_id}.glb"
-
-    if not mesh_path.exists():
-        raise HTTPException(status_code=404, detail="Timeline mesh not found")
-
-    return FileResponse(
-        str(mesh_path),
-        media_type="model/gltf-binary",
-        filename=f"timeline_{job_id}.glb"
-    )
-
-
-@router.get("/mesh/{job_id}/morphs")
-async def get_timeline_morph_data(job_id: str):
-    """Download the morph target delta data as JSON."""
-    json_path = TIMELINE_MESH_DIR / f"{job_id}.morphs.json"
-
-    if not json_path.exists():
-        raise HTTPException(status_code=404, detail="Timeline morph data not found")
-
-    return FileResponse(
-        str(json_path),
-        media_type="application/json",
-        filename=f"timeline_{job_id}.morphs.json"
-    )
