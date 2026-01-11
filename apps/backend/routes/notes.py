@@ -1,6 +1,6 @@
 """Collaborative notes API endpoints."""
 import uuid
-import random
+import hashlib
 from datetime import datetime
 from typing import List
 from fastapi import APIRouter, HTTPException
@@ -21,6 +21,13 @@ NOTE_COLORS = [
     "#C4FAF8",  # Light cyan
     "#FFC6FF",  # Light magenta
 ]
+
+
+def get_color_for_doctor(doctor_name: str) -> str:
+    """Get a consistent color for a doctor based on their name."""
+    hash_value = int(hashlib.md5(doctor_name.encode()).hexdigest(), 16)
+    color_index = hash_value % len(NOTE_COLORS)
+    return NOTE_COLORS[color_index]
 
 
 @router.get("/{patient_id}/{case_id}/{file_id}", response_model=List[NoteResponse])
@@ -76,7 +83,7 @@ async def create_note(
             )
 
         note_id = str(uuid.uuid4())
-        color = random.choice(NOTE_COLORS)
+        color = get_color_for_doctor(note_data.doctor_name)
 
         note_doc = {
             "note_id": note_id,
