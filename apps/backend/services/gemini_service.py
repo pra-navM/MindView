@@ -13,8 +13,8 @@ def get_gemini_model():
         raise ValueError("GEMINI_API_KEY not configured. Add it to your .env file.")
 
     genai.configure(api_key=settings.gemini_api_key)
-    # Using gemini-1.5-flash for free tier
-    return genai.GenerativeModel('gemini-1.5-flash')
+    # Using Gemini Flash for free tier
+    return genai.GenerativeModel('gemini-flash-latest')
 
 
 SYSTEM_PROMPT = """You are a medical AI assistant helping neurologists and radiologists analyze brain MRI scans.
