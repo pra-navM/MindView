@@ -25,18 +25,31 @@ async def list_files(patient_id: int, case_id: int):
 
         files = await cursor.to_list(length=None)
 
-        # Convert to response format
+        # Convert to response format, filtering out orphaned files
         result = []
+        orphaned_ids = []
+
         for file_doc in files:
+            job_id = file_doc["job_id"]
+            status = file_doc["status"]
+
+            # Check if completed files have their mesh on disk
+            if status == "completed":
+                mesh_path = MESH_DIR / f"{job_id}.glb"
+                if not mesh_path.exists():
+                    # Mark for cleanup
+                    orphaned_ids.append(job_id)
+                    continue
+
             result.append(ScanFileResponse(
-                job_id=file_doc["job_id"],
+                job_id=job_id,
                 file_id=file_doc["file_id"],
                 case_id=file_doc["case_id"],
                 patient_id=file_doc["patient_id"],
                 original_filename=file_doc["original_file"]["filename"],
-                status=file_doc["status"],
+                status=status,
                 progress=file_doc["progress"],
-                mesh_url=f"/api/mesh/{file_doc['job_id']}" if file_doc["status"] == "completed" else None,
+                mesh_url=f"/api/mesh/{job_id}" if status == "completed" else None,
                 original_url=None,
                 error=file_doc.get("error"),
                 uploaded_at=file_doc["uploaded_at"],
@@ -44,6 +57,12 @@ async def list_files(patient_id: int, case_id: int):
                 doctor_notes=file_doc.get("doctor_notes"),
                 metadata=file_doc.get("metadata", {})
             ))
+
+        # Clean up orphaned records in background
+        if orphaned_ids:
+            for job_id in orphaned_ids:
+                await Database.scan_files.delete_one({"job_id": job_id})
+                await Database.notes.delete_many({"file_id": job_id})
 
         return result
 
