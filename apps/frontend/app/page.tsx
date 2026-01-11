@@ -11,6 +11,7 @@ import ProcessingStatus from "@/components/ProcessingStatus";
 import RegionControls from "@/components/RegionControls";
 import { uploadFile, uploadMultiModalFiles, getMeshUrl, getMetadata, MeshMetadata, RegionInfo, MultiModalFiles } from "@/lib/api";
 import NotesPanel from "@/components/NotesPanel";
+import CaseFeedback from "@/components/CaseFeedback";
 
 const BrainViewer = dynamic(() => import("@/components/BrainViewer"), {
   ssr: false,
@@ -29,6 +30,7 @@ type AppState =
   | "uploading"
   | "processing"
   | "viewing"
+  | "feedback"
   | "error";
 
 interface RegionState {
@@ -92,6 +94,10 @@ export default function Home() {
 
   const handleUploadFileClick = useCallback(() => {
     setState("file-upload");
+  }, []);
+
+  const handleCaseFeedback = useCallback(() => {
+    setState("feedback");
   }, []);
 
   const handleFileSelect = useCallback(async (file: File, scanDate?: string) => {
@@ -261,6 +267,7 @@ export default function Home() {
             onFileSelected={handleFileSelectedFromList}
             onUploadFile={handleUploadFileClick}
             onChangeCase={() => setState("case-selection")}
+            onCaseFeedback={handleCaseFeedback}
           />
         )}
 
@@ -411,6 +418,15 @@ export default function Home() {
               </div>
             </div>
           </div>
+        )}
+
+        {state === "feedback" && patientId !== null && caseId !== null && caseName !== null && (
+          <CaseFeedback
+            patientId={patientId}
+            caseId={caseId}
+            caseName={caseName}
+            onBack={() => setState("file-list")}
+          />
         )}
 
         {state === "error" && (
