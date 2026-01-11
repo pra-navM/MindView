@@ -10,7 +10,9 @@ interface NotesPanelProps {
 }
 
 function formatTimestamp(dateString: string): string {
-  const date = new Date(dateString);
+  // Backend returns UTC timestamps without Z suffix, so append it
+  const utcDateString = dateString.endsWith("Z") ? dateString : dateString + "Z";
+  const date = new Date(utcDateString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
@@ -153,6 +155,14 @@ export default function NotesPanel({
             <textarea
               value={newNoteContent}
               onChange={(e) => setNewNoteContent(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  if (newNoteContent.trim() && !submitting) {
+                    handleSubmit(e);
+                  }
+                }
+              }}
               placeholder="Add a note..."
               rows={2}
               className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none"
