@@ -33,32 +33,18 @@ function BrainModel({ url, clippingEnabled, clippingPosition, regionStates }: Br
 
   // Clone the scene to avoid issues with cached/shared scene objects
   const clonedScene = useMemo(() => {
-    return scene.clone(true);
-  }, [scene]);
+    const clone = scene.clone(true);
 
-  const clippingPlane = useMemo(() => {
-    return new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  }, []);
-
-  useEffect(() => {
-    clippingPlane.constant = clippingPosition;
-  }, [clippingPlane, clippingPosition]);
-
-  // Initial setup - create materials and extract vertex colors
-  useEffect(() => {
-    scene.traverse((child) => {
+    // Setup materials on the cloned scene
+    clone.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         const meshName = child.name || "unknown";
-
-        // Check for vertex colors
         const hasVertexColors = child.geometry.attributes.color !== undefined;
 
-        // Compute normals for proper lighting
         if (child.geometry) {
           child.geometry.computeVertexNormals();
         }
 
-        // Create material with vertex colors if available
         const material = new THREE.MeshPhongMaterial({
           vertexColors: hasVertexColors,
           color: hasVertexColors ? 0xffffff : 0xcccccc,
@@ -69,11 +55,9 @@ function BrainModel({ url, clippingEnabled, clippingPosition, regionStates }: Br
           transparent: true,
           opacity: 1.0,
           depthWrite: true,
-          clippingPlanes: clippingEnabled ? [clippingPlane] : [],
           clipShadows: true,
         });
 
-        // Fix backface lighting by flipping normals when viewing from behind
         material.onBeforeCompile = (shader) => {
           shader.fragmentShader = shader.fragmentShader.replace(
             '#include <normal_fragment_maps>',
@@ -87,42 +71,31 @@ function BrainModel({ url, clippingEnabled, clippingPosition, regionStates }: Br
       }
     });
 
-    // Cleanup
-    return () => {
-      materialsRef.current.forEach((material) => {
-        material.dispose();
-      });
-      materialsRef.current.clear();
-    };
-  }, [scene, clippingPlane]); // Only run once on mount
+    return clone;
+  }, [scene]);
+
+  const clippingPlane = useMemo(() => {
+    return new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  }, []);
+
+  // Update clipping plane position
+  useEffect(() => {
+    clippingPlane.constant = clippingPosition;
+  }, [clippingPlane, clippingPosition]);
 
   // Update clipping planes when clipping state changes
   useEffect(() => {
-    scene.traverse((child) => {
+    clonedScene.traverse((child) => {
       if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshPhongMaterial) {
         child.material.clippingPlanes = clippingEnabled ? [clippingPlane] : [];
         child.material.needsUpdate = true;
       }
     });
-  }, [clonedScene, clippingEnabled, clippingPlane]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      clonedScene.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.geometry?.dispose();
-          if (child.material instanceof THREE.Material) {
-            child.material.dispose();
-          }
-        }
-      });
-    };
-  }, [clonedScene]);
+  }, [clonedScene, clippingEnabled, clippingPlane, clippingPosition]);
 
   // Update visibility and opacity based on regionStates
   useEffect(() => {
-    scene.traverse((child) => {
+    clonedScene.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         const meshName = child.name || "unknown";
         const state = regionStates[meshName];
@@ -132,13 +105,29 @@ function BrainModel({ url, clippingEnabled, clippingPosition, regionStates }: Br
           if (child.material instanceof THREE.MeshPhongMaterial) {
             child.material.opacity = state.opacity;
             child.material.transparent = state.opacity < 1.0;
-            child.material.depthWrite = true;
+            child.material.depthWrite = state.opacity >= 1.0;
             child.material.needsUpdate = true;
           }
         }
       }
     });
-  }, [scene, regionStates]);
+  }, [clonedScene, regionStates]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      materialsRef.current.forEach((material) => {
+        material.dispose();
+      });
+      materialsRef.current.clear();
+
+      clonedScene.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry?.dispose();
+        }
+      });
+    };
+  }, [clonedScene]);
 
   return (
     <>

@@ -376,18 +376,8 @@ export default function Home() {
             </div>
 
             <div className="flex gap-4">
-              {/* Left Panel - Region Controls & Notes */}
-              <div className="w-72 flex-shrink-0 space-y-4">
-                {metadata && metadata.regions.length > 0 && (
-                  <RegionControls
-                    regions={metadata.regions}
-                    regionStates={regionStates}
-                    onRegionChange={handleRegionChange}
-                    onShowAll={handleShowAll}
-                    onHideAll={handleHideAll}
-                    hasTumor={metadata.has_tumor}
-                  />
-                )}
+              {/* Left Panel - Notes */}
+              <div className="w-72 flex-shrink-0">
                 {jobId && patientId !== null && caseId !== null && (
                   <NotesPanel
                     patientId={patientId}
@@ -404,6 +394,20 @@ export default function Home() {
                   regionStates={regionStates}
                   onReset={handleReset}
                 />
+              </div>
+
+              {/* Right Panel - Region Controls */}
+              <div className="w-72 flex-shrink-0">
+                {metadata && metadata.regions.length > 0 && (
+                  <RegionControls
+                    regions={metadata.regions}
+                    regionStates={regionStates}
+                    onRegionChange={handleRegionChange}
+                    onShowAll={handleShowAll}
+                    onHideAll={handleHideAll}
+                    hasTumor={metadata.has_tumor}
+                  />
+                )}
               </div>
             </div>
           </div>
