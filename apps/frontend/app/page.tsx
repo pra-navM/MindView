@@ -12,6 +12,7 @@ import RegionControls from "@/components/RegionControls";
 import { uploadFile, uploadMultiModalFiles, getMeshUrl, getMetadata, MeshMetadata, RegionInfo, MultiModalFiles } from "@/lib/api";
 import NotesPanel from "@/components/NotesPanel";
 import CaseFeedback from "@/components/CaseFeedback";
+import Footer from "@/components/Footer";
 
 const BrainViewer = dynamic(() => import("@/components/BrainViewer"), {
   ssr: false,
@@ -238,7 +239,7 @@ export default function Home() {
   }, [metadata]);
 
   return (
-    <main className="min-h-screen bg-gray-50">
+    <main className="min-h-screen bg-gray-50 pb-20">
       <div className="max-w-7xl mx-auto px-4 py-8">
         <header className="text-center mb-12">
           <h1 className="text-4xl font-bold text-gray-900 mb-2">MindView</h1>
@@ -494,6 +495,8 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      <Footer />
     </main>
   );
 }
