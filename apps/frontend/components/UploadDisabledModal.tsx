@@ -9,15 +9,15 @@ export default function UploadDisabledModal({ isOpen, onClose }: UploadDisabledM
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center animate-in fade-in duration-200">
       {/* Backdrop with blur */}
       <div
-        className="absolute inset-0 backdrop-blur-sm bg-white/30"
+        className="absolute inset-0 backdrop-blur-sm bg-white/30 transition-all duration-300"
         onClick={onClose}
       />
 
       {/* Modal */}
-      <div className="relative bg-white rounded-xl shadow-2xl p-8 max-w-md w-full mx-4 z-10 border-2 border-gray-200">
+      <div className="relative bg-white rounded-xl shadow-2xl p-8 max-w-md w-full mx-4 z-10 border-2 border-gray-200 animate-in zoom-in-95 duration-300">
         <div className="flex flex-col items-center text-center space-y-4">
           {/* Icon */}
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
@@ -43,7 +43,7 @@ export default function UploadDisabledModal({ isOpen, onClose }: UploadDisabledM
 
           {/* Message */}
           <p className="text-gray-600">
-            File uploads are currently disabled because our server cannot handle large file uploads and server hosting is expensive.
+            File uploads are currently disabled because our server is hosted on a free service and cannot handle large file uploads.
           </p>
           <p className="text-sm text-gray-500">
             Please reach out to louieyin6@gmail.com if you wish to process your brain scan files.
@@ -52,7 +52,7 @@ export default function UploadDisabledModal({ isOpen, onClose }: UploadDisabledM
           {/* Close Button */}
           <button
             onClick={onClose}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors mt-4"
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 mt-4"
           >
             Got it
           </button>
