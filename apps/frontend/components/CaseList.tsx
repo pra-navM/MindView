@@ -91,13 +91,6 @@ export default function CaseList({
   };
 
   const handleCreateCase = async (caseName: string) => {
-    // Show modal on hosted site instead of creating
-    if (isHosted) {
-      setCreateModalOpen(false);
-      setCreateDisabledModalOpen(true);
-      return;
-    }
-
     setCreating(true);
     setError(null);
 
@@ -188,7 +181,13 @@ export default function CaseList({
             </button>
           </div>
           <button
-            onClick={() => setCreateModalOpen(true)}
+            onClick={() => {
+              if (isHosted) {
+                setCreateDisabledModalOpen(true);
+              } else {
+                setCreateModalOpen(true);
+              }
+            }}
             className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
           >
             Create New Case
