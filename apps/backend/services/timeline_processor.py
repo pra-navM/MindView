@@ -18,8 +18,10 @@ TIMELINE_MESH_DIR = BASE_DIR / "storage" / "timeline_meshes"
 TIMELINE_MESH_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def load_nifti_voxels(job_id: str) -> Tuple[np.ndarray, tuple]:
+async def load_nifti_voxels(job_id: str) -> Tuple[np.ndarray, tuple]:
     """Load voxel data from a NIfTI file by job_id.
+
+    Downloads from GridFS if not available locally.
 
     Args:
         job_id: The job ID of the scan file
@@ -36,7 +38,37 @@ def load_nifti_voxels(job_id: str) -> Tuple[np.ndarray, tuple]:
     elif nii_path.exists():
         path = nii_path
     else:
-        raise FileNotFoundError(f"NIfTI file not found for job {job_id}")
+        # File not on filesystem - try to download from GridFS
+        print(f"[Timeline] NIfTI file not found locally for {job_id}, downloading from GridFS...")
+        from database import Database
+        from services.gridfs_service import download_from_gridfs
+        from bson import ObjectId
+
+        # Get file record from database
+        file_doc = await Database.scan_files.find_one({"job_id": job_id})
+        if not file_doc:
+            raise FileNotFoundError(f"NIfTI file not found in database for job {job_id}")
+
+        # Get GridFS ID for original file
+        original_file = file_doc.get("original_file", {})
+        gridfs_id = original_file.get("gridfs_id")
+        filename = original_file.get("filename", f"{job_id}.nii.gz")
+
+        if not gridfs_id:
+            raise FileNotFoundError(f"NIfTI file not in GridFS for job {job_id}")
+
+        # Download from GridFS
+        print(f"[Timeline] Downloading {filename} from GridFS (ID: {gridfs_id})...")
+        file_data = await download_from_gridfs(ObjectId(gridfs_id))
+
+        # Determine extension and save to disk temporarily
+        ext = ".nii.gz" if filename.endswith(".nii.gz") else ".nii"
+        path = UPLOAD_DIR / f"{job_id}{ext}"
+
+        with open(path, "wb") as f:
+            f.write(file_data)
+
+        print(f"[Timeline] Downloaded {len(file_data)} bytes to {path}")
 
     img = nib.load(str(path))
     data = img.get_fdata()
@@ -297,7 +329,7 @@ async def process_timeline_generation(
     for i, scan_id in enumerate(scan_job_ids):
         update_progress(job_id, 5 + int(10 * (i + 1) / len(scan_job_ids)),
                        f"Loading scan {i+1}/{len(scan_job_ids)}")
-        voxels, sp = load_nifti_voxels(scan_id)
+        voxels, sp = await load_nifti_voxels(scan_id)
         voxels_list.append(voxels)
         if spacing is None:
             spacing = sp
